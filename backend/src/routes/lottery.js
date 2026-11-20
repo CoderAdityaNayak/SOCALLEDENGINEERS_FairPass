@@ -15,10 +15,10 @@ const DESCRIPTION = 'FairPass lottery entry'
 const entryUrl = (eventId) => `${config.publicApiUrl}/events/${eventId}/enter`
 
 /**
- * POST /events/:id/enter  { quantity: 1 | 2 }
+ * POST /events/:id/enter  { quantity: n }   (any number of tickets, 1..tickets in the draw; one entry per person)
  * Checks run cheapest-first, and every rejection is logged with its reason:
- *   lottery open -> logged in (NO_ID) -> ID verified (NOT_VERIFIED) -> one entry per ID per event across
- *   lottery + corporate pools (DUPLICATE_ENTRY) -> IP rate limit (RATE_LIMITED) -> x402 Work proof (INVALID_POW).
+ *   lottery open -> logged in (NO_ID) -> ID verified (NOT_VERIFIED) -> one entry per verified person per event
+ *   (DUPLICATE_ENTRY) -> IP rate limit (RATE_LIMITED) -> x402 Work proof (INVALID_POW).
  * Without a proof the response is 402 + PAYMENT-REQUIRED (a puzzle bound to this account).
  */
 router.post('/:id/enter', async (req, res) => {
@@ -36,17 +36,11 @@ router.post('/:id/enter', async (req, res) => {
   if (!user.isVerified || !user.idHash) block(403, 'NOT_VERIFIED', 'Verify your ID to enter')
 
   const quantity = Number(req.body?.quantity ?? 1)
-  if (quantity !== 1 && quantity !== 2) throw new HttpError(400, 'You can request 1 or 2 tickets per ID', { reason: 'BAD_QUANTITY' })
+  if (!Number.isInteger(quantity) || quantity < 1 || quantity > event.lotteryTickets)
+    throw new HttpError(400, `Ask for between 1 and ${event.lotteryTickets} tickets`, { reason: 'BAD_QUANTITY' })
 
-  const already =
-    db.prepare('SELECT 1 FROM entries WHERE eventId = ? AND idHash = ?').get(event.id, user.idHash) ||
-    db
-      .prepare(
-        `SELECT 1 FROM corporate_seats s JOIN users u ON u.id = s.userId
-         WHERE s.eventId = ? AND u.idHash = ?`,
-      )
-      .get(event.id, user.idHash)
-  if (already) block(409, 'DUPLICATE_ENTRY', 'This ID already has an entry or a seat for this event')
+  const already = db.prepare('SELECT 1 FROM entries WHERE eventId = ? AND idHash = ?').get(event.id, user.idHash)
+  if (already) block(409, 'DUPLICATE_ENTRY', 'This verified person already has an entry for this event')
 
   // DEMO_MODE only: the bot simulator tags itself so a live demo on one laptop doesn't rate-limit the
   // presenter's browser too. Outside demo mode the header is ignored (it could be spoofed).
@@ -79,7 +73,7 @@ router.post('/:id/enter', async (req, res) => {
       .prepare('INSERT INTO entries (userId, eventId, idHash, quantity, powRef) VALUES (?, ?, ?, ?, ?)')
       .run(user.id, event.id, user.idHash, quantity, proof.powRef).lastInsertRowid
   } catch (err) {
-    if (String(err.message).includes('UNIQUE')) block(409, 'DUPLICATE_ENTRY', 'This ID already has an entry for this event')
+    if (String(err.message).includes('UNIQUE')) block(409, 'DUPLICATE_ENTRY', 'This verified person already has an entry for this event')
     throw err
   }
   const entryNumber = db.prepare('SELECT COUNT(*) n FROM entries WHERE eventId = ? AND id <= ?').get(event.id, entryId).n
@@ -121,7 +115,7 @@ router.get('/:id/draw-proof', (req, res) => {
   const event = requireEvent(req.params.id)
   const revealed = !!event.drawnAt
   const entries = db
-    .prepare('SELECT id, quantity, status, drawRank, drawKey FROM entries WHERE eventId = ? ORDER BY ' + (revealed ? 'drawRank' : 'id'))
+    .prepare('SELECT id, quantity, ticketsWon, status, drawRank, drawKey FROM entries WHERE eventId = ? ORDER BY ' + (revealed ? 'drawRank' : 'id'))
     .all(event.id)
   res.json({
     eventId: event.id,
@@ -131,7 +125,8 @@ router.get('/:id/draw-proof', (req, res) => {
     lotteryTickets: event.lotteryTickets,
     algorithm:
       'Check sha256(seed) == seedHash. For each entry, key = sha256(seed + ":" + entryId) (hex). Sort entries by key ascending. ' +
-      'Walk the list giving each entry its quantity while lotteryTickets remain; the rest are waitlisted in that order.',
+      'Walk the list giving each entry the quantity it asked for while lotteryTickets remain; the entry where they run out gets ' +
+      'what is left (partial) and the rest of its quantity waits; everyone after is waitlisted in that order.',
     verified: revealed ? sha256(event.seed) === event.seedHash && entries.every((e) => e.drawKey === drawKey(event.seed, e.id)) : null,
     orderedEntryIds: entries.map((e) => e.id),
     entries,
@@ -175,6 +170,8 @@ router.get('/:id/stats', (req, res) => {
       total: one('SELECT COUNT(*) n FROM entries WHERE eventId = ?', id).n,
       ticketsRequested: one('SELECT COALESCE(SUM(quantity),0) n FROM entries WHERE eventId = ?', id).n,
       won: one("SELECT COUNT(*) n FROM entries WHERE eventId = ? AND status = 'won'", id).n,
+      partial: one("SELECT COUNT(*) n FROM entries WHERE eventId = ? AND status = 'partial'", id).n,
+      ticketsWon: one('SELECT COALESCE(SUM(ticketsWon),0) n FROM entries WHERE eventId = ?', id).n,
       waitlist: one("SELECT COUNT(*) n FROM entries WHERE eventId = ? AND status = 'waitlist'", id).n,
     },
     blocked,
@@ -186,12 +183,12 @@ router.get('/:id/stats', (req, res) => {
     },
     tickets: {
       minted: activity('minted'),
-      forSale: one("SELECT COUNT(*) n FROM tickets WHERE eventId = ? AND status = 'listed'", id).n,
+      forSale: one("SELECT COUNT(*) n FROM tickets WHERE eventId = ? AND status = 'listed' AND listingInvalid IS NULL", id).n,
+      invalidListings: one("SELECT COUNT(*) n FROM tickets WHERE eventId = ? AND status = 'listed' AND listingInvalid IS NOT NULL", id).n,
       resold: activity('resold'),
       returned: activity('returned'),
       reassigned: activity('reassigned'),
       scanned: one("SELECT COUNT(*) n FROM scans s JOIN tickets t ON t.tokenId = s.tokenId WHERE t.eventId = ? AND s.result = 'VALID'", id).n,
-      corporate: one('SELECT COUNT(*) n FROM tickets WHERE eventId = ? AND corporate = 1', id).n,
     },
     scans: Object.fromEntries(
       db

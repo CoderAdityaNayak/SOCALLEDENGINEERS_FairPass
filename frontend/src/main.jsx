@@ -13,7 +13,6 @@ import TicketPage from './pages/Ticket.jsx'
 import Resale from './pages/Resale.jsx'
 import Gate from './pages/Gate.jsx'
 import Organiser from './pages/Organiser.jsx'
-import Corporate from './pages/Corporate.jsx'
 
 /** Sends logged-out users to /login (and back afterwards); optionally restricts roles. */
 function Protected({ roles, children }) {
@@ -45,7 +44,6 @@ createRoot(document.getElementById('root')).render(
             <Route path="tickets/:tokenId/resale" element={<Protected><Resale /></Protected>} />
             <Route path="gate" element={<Protected roles={['staff', 'organiser']}><Gate /></Protected>} />
             <Route path="organiser" element={<Protected roles={['organiser']}><Organiser /></Protected>} />
-            <Route path="corporate" element={<Protected><Corporate /></Protected>} />
             <Route path="*" element={<p className="py-20 text-center text-muted">Page not found.</p>} />
           </Route>
         </Routes>

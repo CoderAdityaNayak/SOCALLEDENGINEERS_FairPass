@@ -121,7 +121,7 @@ test('chain: mint to a custodial wallet, sponsor gas, over-cap listing reverts w
   const fan = getUserByPhone('+919876500002')
   const event = db.prepare('SELECT * FROM events WHERE id = ?').get(linkedEvent.id)
   let t = Date.now()
-  const ticket = await mintToUser(event, fan)
+  const [ticket] = await mintToUser(event, fan, 1)
   console.log(`    mint took ${((Date.now() - t) / 1000).toFixed(1)}s -> token ${ticket.tokenId}, seat ${ticket.seat}`)
   assert.equal((await quai.ownerOf(ticket.tokenId)).toLowerCase(), fan.walletAddress.toLowerCase())
   assert.equal(await quai.ownerOf(999999), null)

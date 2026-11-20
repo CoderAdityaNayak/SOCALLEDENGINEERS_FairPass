@@ -4,7 +4,7 @@ import { Link, useParams } from 'react-router'
 import { api, API_URL, authHeaders } from '../lib/api.js'
 import { useSession } from '../lib/session.jsx'
 import { payWithWork } from '../lib/x402work.js'
-import { num, timeShort } from '../lib/format.js'
+import { inr, num, timeShort } from '../lib/format.js'
 import { Button, Card, ErrorNote, Spinner } from '../components/ui.jsx'
 import * as I from '../components/Icons.jsx'
 
@@ -51,7 +51,7 @@ export default function Enter() {
       .then((r) => {
         setEvent(r.event)
         if (r.myEntry) {
-          setResult({ entry: { ...r.myEntry, entryNumber: null }, existing: true })
+          setResult({ entry: r.myEntry, existing: true })
           setPhase('done')
         }
       })
@@ -65,7 +65,7 @@ export default function Enter() {
     try {
       const r = await payWithWork(
         `${API_URL}/events/${eventId}/enter`,
-        { quantity },
+        { quantity: Math.min(event.lotteryTickets, Math.max(1, Number(quantity) || 1)) },
         {
           headers: authHeaders(),
           onChallenge: (offer) => setProgress({ guesses: 0, expected: Number(offer.amount) }),
@@ -106,21 +106,45 @@ export default function Enter() {
 
       {phase === 'ready' && (
         <Card className="mt-5">
-          <p className="mb-3 font-semibold">How many tickets?</p>
-          <div className="grid grid-cols-2 gap-3" role="radiogroup" aria-label="Number of tickets">
-            {[1, 2].map((q) => (
-              <button
-                key={q}
-                role="radio"
-                aria-checked={quantity === q}
-                onClick={() => setQuantity(q)}
-                className={`min-h-14 rounded-[14px] border-2 font-display text-xl ${quantity === q ? 'border-lime bg-lime/10 text-lime' : 'border-line text-muted'}`}
-              >
-                {q} ticket{q > 1 ? 's' : ''}
-              </button>
-            ))}
+          <label htmlFor="qty" className="mb-3 block font-semibold">
+            How many tickets?
+          </label>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setQuantity((q) => Math.max(1, (Number(q) || 1) - 1))}
+              className="grid size-14 shrink-0 place-items-center rounded-[14px] border border-line text-ink hover:border-muted disabled:text-muted"
+              disabled={Number(quantity) <= 1}
+              aria-label="One ticket fewer"
+            >
+              <I.Minus size={22} />
+            </button>
+            <input
+              id="qty"
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={event.lotteryTickets}
+              value={quantity}
+              onChange={(e) => setQuantity(e.target.value === '' ? '' : Math.floor(Number(e.target.value)))}
+              onBlur={() => setQuantity((q) => Math.min(event.lotteryTickets, Math.max(1, Number(q) || 1)))}
+              className="min-h-14 w-full rounded-[14px] border border-line bg-bg text-center font-display text-3xl focus:border-lime focus:outline-none"
+              aria-describedby="qty-help"
+            />
+            <button
+              type="button"
+              onClick={() => setQuantity((q) => Math.min(event.lotteryTickets, (Number(q) || 0) + 1))}
+              className="grid size-14 shrink-0 place-items-center rounded-[14px] border border-line text-ink hover:border-muted disabled:text-muted"
+              disabled={Number(quantity) >= event.lotteryTickets}
+              aria-label="One ticket more"
+            >
+              <I.Plus size={22} />
+            </button>
           </div>
-          <p className="mt-3 text-sm text-muted">Max 2 per verified ID. You pay only if you win.</p>
+          <p id="qty-help" className="mt-3 text-sm text-muted">
+            {inr((event.facePriceInr || 0) * (Number(quantity) || 0))} if you win all of them. One entry per verified person; if tickets run out
+            at your turn you get what's left and wait for the rest. You pay only for what you win.
+          </p>
         </Card>
       )}
 
@@ -167,6 +191,10 @@ export default function Enter() {
             <>
               <p className="text-sm text-muted">Your entry number</p>
               <p className="font-display text-6xl text-lime">#{result.entry.entryNumber}</p>
+              <p className="mt-1 text-sm text-muted">
+                for {result.entry.quantity} ticket{result.entry.quantity > 1 ? 's' : ''}
+                {result.existing ? ' · you already entered this lottery' : ''}
+              </p>
             </>
           ) : (
             <p className="font-display text-xl">You already entered this lottery</p>
@@ -185,7 +213,7 @@ export default function Enter() {
 
       {(phase === 'ready' || phase === 'error') && (
         <Button className="mt-5 w-full" onClick={start} disabled={!user.isVerified}>
-          {phase === 'error' ? 'Try again' : `Enter with ${quantity} ticket${quantity > 1 ? 's' : ''}`}
+          {phase === 'error' ? 'Try again' : `Enter for ${Number(quantity) || 1} ticket${Number(quantity) > 1 ? 's' : ''}`}
         </Button>
       )}
 

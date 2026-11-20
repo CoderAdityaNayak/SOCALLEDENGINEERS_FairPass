@@ -1,10 +1,11 @@
-// Event listing and creation (organiser creates the event on-chain).
+// Events: listing, creation (on-chain) and the organiser-controlled resale cap.
 import crypto from 'node:crypto'
 import { Router } from 'express'
 import { config } from '../config.js'
 import { db, logActivity } from '../db.js'
 import { HttpError, loadUser, requireRole } from '../auth.js'
 import * as quai from '../services/quai.js'
+import { faceInr, inrToWei, maxResaleInr, maxResaleWei } from '../services/money.js'
 
 export const router = Router()
 
@@ -16,8 +17,7 @@ export function requireEvent(id) {
   return event
 }
 
-/** Corporate pool is capped at 5% of supply. */
-export const corporateCap = (event) => Math.floor(event.supply * 0.05)
+export const INVALID_LISTING = 'invalid – above new cap'
 
 /** Event as shown to anyone: the draw seed stays secret until the draw (commit-reveal). */
 export function publicEvent(e) {
@@ -45,16 +45,19 @@ export function publicEvent(e) {
     venue: e.venue,
     city: e.city,
     facePrice: e.facePrice,
-    maxResalePrice: String((Number(e.facePrice) * (100 + e.resaleCapPct)) / 100),
+    facePriceInr: faceInr(e),
+    maxResalePrice: quai.quais.formatQuai(maxResaleWei(e)),
+    maxResalePriceInr: maxResaleInr(e),
+    inrPerQuai: config.inrPerQuai,
     supply: e.supply,
     lotteryTickets: e.lotteryTickets,
-    corporateCap: corporateCap(e),
     resaleCapPct: e.resaleCapPct,
-    maxPerId: 2,
-    antiBot: { scheme: 'x402 Work', profile: 'quai/sha256d-v1', guesses: config.x402Amount },
+    resaleCapTx: e.resaleCapTx ? quai.explorerTx(e.resaleCapTx) : null,
+    resaleCapUpdatedAt: e.resaleCapUpdatedAt,
     lotteryOpen: e.lotteryOpen,
     lotteryClose: e.lotteryClose,
     lotteryStatus: status,
+    antiBot: { scheme: 'x402 Work', profile: 'quai/sha256d-v1', guesses: config.x402Amount, oneEntryPerPerson: true },
     seedHash: e.seedHash,
     seed: e.drawnAt ? e.seed : null,
     drawnAt: e.drawnAt,
@@ -73,27 +76,50 @@ router.get('/:id', (req, res) => {
   const event = requireEvent(req.params.id)
   const user = loadUser(req)
   const myEntry = user
-    ? db.prepare('SELECT id, quantity, status, drawRank, createdAt FROM entries WHERE eventId = ? AND userId = ?').get(event.id, user.id)
+    ? db
+        .prepare('SELECT id, quantity, ticketsWon, entryNumber, status, drawRank, createdAt FROM entries WHERE eventId = ? AND userId = ?')
+        .get(event.id, user.id)
     : null
   res.json({ event: publicEvent(event), myEntry: myEntry || null })
 })
 
+function parseCap(value) {
+  const pct = Number(value)
+  if (!Number.isInteger(pct) || pct < 0 || pct > 100) throw new HttpError(400, 'Resale markup must be a whole number from 0 to 100 (%)')
+  return pct
+}
+
 /**
- * Organiser creates an event. By default this creates it on-chain (createEvent). Pass
- * `chainEventId` to link an event that already exists on-chain (e.g. the demo event from deploy.js).
+ * Organiser creates an event: on-chain createEvent with the face price (₹ → QUAI at INR_PER_QUAI) and the
+ * resale markup %. Pass `chainEventId` to link an event that already exists on-chain (e.g. from deploy.js).
  */
 router.post('/', requireRole('organiser'), async (req, res) => {
   const b = req.body || {}
   const name = String(b.name || '').trim()
   const date = new Date(b.date)
   const supply = Number(b.supply)
-  const facePrice = String(b.facePrice ?? '')
-  const resaleCapPct = Number(b.resaleCapPct ?? 10)
-  if (!name) throw new HttpError(400, 'name is required')
-  if (Number.isNaN(date.getTime())) throw new HttpError(400, 'date must be a valid date')
-  if (!Number.isInteger(supply) || supply < 1 || supply > 100000) throw new HttpError(400, 'supply must be 1..100000')
-  if (!(Number(facePrice) > 0)) throw new HttpError(400, 'facePrice (QUAI) must be > 0')
-  if (!Number.isInteger(resaleCapPct) || resaleCapPct < 0 || resaleCapPct > 100) throw new HttpError(400, 'resaleCapPct must be 0..100')
+  const resaleCapPct = parseCap(b.resaleCapPct ?? 10)
+  if (!name) throw new HttpError(400, 'Event name is required')
+  if (Number.isNaN(date.getTime())) throw new HttpError(400, 'Enter a valid event date')
+  if (!Number.isInteger(supply) || supply < 1 || supply > 100000) throw new HttpError(400, 'Seats must be 1 to 100,000')
+
+  // Face price: ₹ (preferred) or QUAI.
+  let facePriceInr = b.facePriceInr != null && b.facePriceInr !== '' ? Number(b.facePriceInr) : null
+  let facePrice
+  if (facePriceInr != null) {
+    if (!(facePriceInr > 0)) throw new HttpError(400, 'Face price must be more than ₹0')
+    const wei = inrToWei(facePriceInr)
+    if (wei <= 0n) throw new HttpError(400, 'Face price is too small')
+    facePrice = quai.quais.formatQuai(wei)
+  } else {
+    facePrice = String(b.facePrice ?? '')
+    if (!(Number(facePrice) > 0)) throw new HttpError(400, 'Face price is required')
+    facePriceInr = null // derived from QUAI when shown
+  }
+
+  const lotteryTickets = b.lotteryTickets != null && b.lotteryTickets !== '' ? Number(b.lotteryTickets) : supply
+  if (!Number.isInteger(lotteryTickets) || lotteryTickets < 1 || lotteryTickets > supply)
+    throw new HttpError(400, 'Tickets in the draw must be between 1 and the number of seats')
 
   let chainEventId = b.chainEventId ? Number(b.chainEventId) : null
   let createTx = null
@@ -105,6 +131,10 @@ router.post('/', requireRole('organiser'), async (req, res) => {
     chainEventId = created.chainEventId
     createTx = created.hash
   }
+  // Mirror the on-chain values (a linked event keeps its own cap and price).
+  const onChain = await quai.chainEvent(chainEventId)
+  const chainCap = Number(onChain.resaleCapPct)
+  const chainFace = quai.quais.formatQuai(onChain.facePrice)
 
   // Commit-reveal: the seed is fixed now; only its hash is public until the draw.
   const seed = crypto.randomBytes(32).toString('hex')
@@ -112,13 +142,12 @@ router.post('/', requireRole('organiser'), async (req, res) => {
   const now = new Date()
   const lotteryOpen = b.lotteryOpen ? new Date(b.lotteryOpen) : now
   const lotteryClose = b.lotteryClose ? new Date(b.lotteryClose) : new Date(now.getTime() + 2 * 86400_000)
-  const lotteryTickets = Number(b.lotteryTickets ?? supply - Math.floor(supply * 0.05))
 
   const info = db
     .prepare(
-      `INSERT INTO events (chainEventId, name, artist, date, venue, city, facePrice, supply, lotteryTickets, resaleCapPct,
-         lotteryOpen, lotteryClose, seedHash, seed, createTx)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO events (chainEventId, name, artist, date, venue, city, facePrice, facePriceInr, supply, lotteryTickets,
+         resaleCapPct, lotteryOpen, lotteryClose, seedHash, seed, createTx)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       chainEventId,
@@ -127,10 +156,11 @@ router.post('/', requireRole('organiser'), async (req, res) => {
       date.toISOString(),
       b.venue || null,
       b.city || null,
-      facePrice,
+      chainFace,
+      facePrice === chainFace ? facePriceInr : null,
       supply,
       lotteryTickets,
-      resaleCapPct,
+      chainCap,
       lotteryOpen.toISOString(),
       lotteryClose.toISOString(),
       seedHash,
@@ -138,6 +168,48 @@ router.post('/', requireRole('organiser'), async (req, res) => {
       createTx,
     )
   const event = getEvent(info.lastInsertRowid)
-  logActivity({ eventId: event.id, kind: 'event_created', txHash: createTx, detail: `chainEventId ${chainEventId}` })
+  logActivity({ eventId: event.id, kind: 'event_created', txHash: createTx, detail: `chainEventId ${chainEventId}, resale cap ${chainCap}%` })
   res.status(201).json({ event: publicEvent(event) })
+})
+
+/**
+ * POST /events/:id/resale-cap {pct}: organiser changes the resale markup. Calls setResaleCap on Quai and waits
+ * for confirmation, then saves the % and tx (mirrored to Firestore) and re-checks every listing: those above the
+ * new maximum are marked invalid (the contract won't let anyone buy them); ones back under it become valid again.
+ */
+router.post('/:id/resale-cap', requireRole('organiser'), async (req, res) => {
+  const event = requireEvent(req.params.id)
+  const pct = parseCap(req.body?.pct)
+  const oldPct = event.resaleCapPct
+
+  const { hash } = await quai.setResaleCap(event.chainEventId, pct)
+  const updatedAt = new Date().toISOString()
+  db.prepare('UPDATE events SET resaleCapPct = ?, resaleCapTx = ?, resaleCapUpdatedAt = ? WHERE id = ?').run(pct, hash, updatedAt, event.id)
+  logActivity({ eventId: event.id, kind: 'resale_cap', txHash: hash, detail: `${oldPct}% -> ${pct}%` })
+
+  const updated = getEvent(event.id)
+  const max = maxResaleWei(updated)
+  const listings = db.prepare("SELECT tokenId, listedPrice FROM tickets WHERE eventId = ? AND status = 'listed'").all(event.id)
+  const mark = db.prepare('UPDATE tickets SET listingInvalid = ? WHERE tokenId = ?')
+  let invalidated = 0
+  let revalidated = 0
+  db.transaction(() => {
+    for (const t of listings) {
+      const above = quai.quais.parseQuai(t.listedPrice) > max
+      const before = db.prepare('SELECT listingInvalid FROM tickets WHERE tokenId = ?').get(t.tokenId).listingInvalid
+      if (above && !before) invalidated++
+      if (!above && before) revalidated++
+      mark.run(above ? INVALID_LISTING : null, t.tokenId)
+    }
+  })()
+
+  res.json({
+    event: publicEvent(updated),
+    oldPct,
+    pct,
+    txHash: hash,
+    tx: quai.explorerTx(hash),
+    listingsInvalidated: invalidated,
+    listingsRevalidated: revalidated,
+  })
 })

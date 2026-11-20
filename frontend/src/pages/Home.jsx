@@ -1,9 +1,10 @@
-// Event page: poster, price, lottery countdown, "how this sale is fair", enter button.
+// Event page: poster, price, lottery countdown, "how this sale is fair" (live resale cap), enter button.
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
 import { api } from '../lib/api.js'
 import { useSession } from '../lib/session.jsx'
-import { dateLong, quai } from '../lib/format.js'
+import { dateLong, inr } from '../lib/format.js'
+import { useLiveEvent } from '../lib/liveEvent.js'
 import { Badge, Card, Countdown, ErrorNote, Spinner, TxLink } from '../components/ui.jsx'
 import * as I from '../components/Icons.jsx'
 
@@ -31,42 +32,45 @@ function Poster({ event }) {
   )
 }
 
-const FAIR = [
-  { icon: I.Shuffle, title: 'Random draw, not a race', text: 'Everyone who enters before the deadline has the same chance. Being fast (or a bot) gives no edge.' },
-  { icon: I.Users, title: '2 tickets per verified ID', text: 'One ID, one entry. Bots would need a real ID for every entry, plus a proof-of-work puzzle.' },
-  { icon: I.Percent, title: 'Resale capped at +10%', text: 'Tickets can only be resold through the FairPass contract, never above face price + 10%.' },
-]
+const ENTRY_TEXT = { entered: "You're in the draw", won: 'You won', partial: 'You won some tickets', waitlist: 'On the waitlist', lost: 'Not picked' }
 
 export default function Home() {
   const { user } = useSession()
-  const [state, setState] = useState({ loading: true })
+  const [featuredId, setFeaturedId] = useState(null)
+  const [listError, setListError] = useState(null)
 
   useEffect(() => {
-    let alive = true
     api('/events')
-      .then(async ({ events }) => {
-        const featured = events.find((e) => e.lotteryStatus === 'open') || events[0]
-        const detail = featured ? await api(`/events/${featured.id}`) : null
-        if (alive) setState({ loading: false, event: detail?.event, myEntry: detail?.myEntry })
-      })
-      .catch((error) => alive && setState({ loading: false, error }))
-    return () => {
-      alive = false
-    }
-  }, [user])
+      .then(({ events }) => setFeaturedId((events.find((e) => e.lotteryStatus === 'open') || events[0])?.id ?? 0))
+      .catch(setListError)
+  }, [])
 
-  if (state.loading)
+  const { event, myEntry, error } = useLiveEvent(featuredId || null, { withEntry: !!user })
+
+  if (listError || error) return <ErrorNote error={listError || error} />
+  if (featuredId === 0) return <p className="py-20 text-center text-muted">No events yet.</p>
+  if (!event)
     return (
       <div className="grid place-items-center py-20 text-muted">
         <Spinner />
       </div>
     )
-  if (state.error) return <ErrorNote error={state.error} />
-  const { event, myEntry } = state
-  if (!event) return <p className="py-20 text-center text-muted">No events yet.</p>
 
   const open = event.lotteryStatus === 'open'
   const entryHref = user ? `/enter/${event.id}` : `/login?next=/enter/${event.id}`
+  const fair = [
+    { icon: I.Shuffle, title: 'Random draw, not a race', text: 'Everyone who enters before the deadline has the same chance. Being fast (or a bot) gives no edge.' },
+    {
+      icon: I.Users,
+      title: 'One entry per verified person',
+      text: 'Choose how many tickets you want, but each verified ID can enter only once, and every entry solves an anti-bot puzzle.',
+    },
+    {
+      icon: I.Percent,
+      title: `Resale capped at face + ${event.resaleCapPct}%`,
+      text: `Tickets can only be resold through the FairPass contract, never above ${inr(event.maxResalePriceInr)}. The organiser sets this limit on-chain.`,
+    },
+  ]
 
   return (
     <div className="mx-auto max-w-xl space-y-4">
@@ -75,8 +79,10 @@ export default function Home() {
       <div className="grid grid-cols-2 gap-3">
         <Card className="p-4">
           <p className="text-sm text-muted">Face price</p>
-          <p className="mt-1 font-display text-2xl">{quai(event.facePrice)}</p>
-          <p className="mt-1 text-xs text-muted">Resale max {quai(event.maxResalePrice)}</p>
+          <p className="mt-1 font-display text-2xl">{inr(event.facePriceInr)}</p>
+          <p className="mt-1 text-xs text-muted" aria-live="polite">
+            Resale max {inr(event.maxResalePriceInr)} (+{event.resaleCapPct}%)
+          </p>
         </Card>
         <Card className="p-4">
           <p className="text-sm text-muted">Lottery</p>
@@ -99,16 +105,21 @@ export default function Home() {
       {myEntry ? (
         <Card className="flex items-center justify-between gap-3">
           <div>
-            <p className="text-sm text-muted">Your entry</p>
-            <p className="font-display text-xl capitalize">{myEntry.status === 'entered' ? "You're in the draw" : myEntry.status}</p>
-            {myEntry.drawRank && <p className="text-sm text-muted">Draw rank #{myEntry.drawRank}</p>}
+            <p className="text-sm text-muted">Your entry{myEntry.entryNumber ? ` #${myEntry.entryNumber}` : ''}</p>
+            <p className="font-display text-xl">{ENTRY_TEXT[myEntry.status] || myEntry.status}</p>
+            <p className="text-sm text-muted">
+              {myEntry.status === 'entered'
+                ? `${myEntry.quantity} ticket${myEntry.quantity > 1 ? 's' : ''} requested`
+                : `${myEntry.ticketsWon} of ${myEntry.quantity} ticket${myEntry.quantity > 1 ? 's' : ''}`}
+              {myEntry.drawRank ? ` · draw rank #${myEntry.drawRank}` : ''}
+            </p>
           </div>
-          {myEntry.status === 'won' ? (
+          {['won', 'partial'].includes(myEntry.status) ? (
             <Link to="/tickets" className="rounded-[14px] bg-lime px-4 py-3 font-semibold text-lime-ink">
               My tickets
             </Link>
           ) : (
-            <Badge tone={myEntry.status === 'waitlist' ? 'muted' : 'lime'}>{myEntry.status === 'waitlist' ? 'On waitlist' : 'Entered'}</Badge>
+            <Badge tone={myEntry.status === 'waitlist' ? 'muted' : 'lime'}>{myEntry.status === 'waitlist' ? 'Waitlist' : 'Entered'}</Badge>
           )}
         </Card>
       ) : (
@@ -127,7 +138,7 @@ export default function Home() {
           How this sale is fair
         </h2>
         <div className="space-y-3">
-          {FAIR.map((f) => (
+          {fair.map((f) => (
             <Card key={f.title} className="flex gap-4 p-4">
               <span className="grid size-10 shrink-0 place-items-center rounded-[12px] bg-lime/15 text-lime">
                 <f.icon size={20} />

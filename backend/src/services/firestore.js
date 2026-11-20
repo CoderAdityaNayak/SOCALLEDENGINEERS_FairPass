@@ -18,13 +18,13 @@ import { initializeApp } from 'firebase/app'
 import { collection, doc, getCount, getDoc, getDocs, getFirestore, serverTimestamp, setDoc, writeBatch } from 'firebase/firestore/lite'
 import { config } from '../config.js'
 import { db, instanceId } from '../db.js'
+import { faceInr, maxResaleInr, maxResaleWei } from './money.js'
+import { quais } from 'quais'
 
 const TABLES = {
   users: 'id',
   events: 'id',
   entries: 'id',
-  companies: 'id',
-  corporate_seats: 'id',
   tickets: 'tokenId',
   scans: 'id',
   blocked_attempts: 'id',
@@ -33,9 +33,6 @@ const TABLES = {
 }
 const BOOLEAN_COLUMNS = {
   users: ['isVerified'],
-  companies: ['approved'],
-  corporate_seats: ['verified'],
-  tickets: ['corporate'],
   pow_challenges: ['solved'],
 }
 const BATCH_SIZE = 450 // Firestore allows 500 writes per batch
@@ -65,8 +62,7 @@ const rowStmt = Object.fromEntries(Object.entries(TABLES).map(([t, pk]) => [t, d
 // Lookups that add organiser-readable fields (names, phones, event names) to each document.
 const q = {
   user: db.prepare('SELECT id, name, phone, role, idType, idLast4, walletAddress FROM users WHERE id = ?'),
-  event: db.prepare('SELECT id, name, artist, date, venue FROM events WHERE id = ?'),
-  company: db.prepare('SELECT id, name, gstin FROM companies WHERE id = ?'),
+  event: db.prepare('SELECT id, name, artist, date, venue, resaleCapPct FROM events WHERE id = ?'),
   ticket: db.prepare('SELECT tokenId, eventId, seat, ownerUserId FROM tickets WHERE tokenId = ?'),
 }
 const get = (stmt, id) => (id == null ? undefined : stmt.get(id))
@@ -93,7 +89,16 @@ function enrich(table, d) {
     case 'users':
       return { ...d, idMasked: maskId(d.idType, d.idLast4), loginMethod: 'phone OTP', walletUrl: `${config.explorer}/address/${d.walletAddress}` }
     case 'events':
-      return { ...d, contract: config.contract.address, createTxUrl: txUrl(d.createTx) }
+      return {
+        ...d,
+        facePriceInr: faceInr(d),
+        maxResalePrice: quais.formatQuai(maxResaleWei(d)),
+        maxResalePriceInr: maxResaleInr(d),
+        inrPerQuai: config.inrPerQuai,
+        contract: config.contract.address,
+        createTxUrl: txUrl(d.createTx),
+        resaleCapTxUrl: txUrl(d.resaleCapTx),
+      }
     case 'entries': {
       const u = get(q.user, d.userId)
       return { ...d, ...eventName, ...person('user', u), idType: u?.idType ?? null, idMasked: maskId(u?.idType, u?.idLast4) }
@@ -123,13 +128,6 @@ function enrich(table, d) {
         ...person('staff', get(q.user, d.staffId)),
         txUrl: txUrl(d.txHash),
       }
-    }
-    case 'companies':
-      return { ...d, ...eventName, ...person('admin', get(q.user, d.adminUserId)) }
-    case 'corporate_seats': {
-      const c = get(q.company, d.companyId)
-      const t = get(q.ticket, d.tokenId)
-      return { ...d, ...eventName, companyName: c?.name ?? null, gstin: c?.gstin ?? null, ...person('employee', get(q.user, d.userId)), seat: t?.seat ?? null }
     }
     case 'activity':
       return { ...d, ...eventName, ...person('user', get(q.user, d.userId)), txUrl: txUrl(d.txHash) }
@@ -171,7 +169,10 @@ function statsDoc(eventId) {
     winners: n("SELECT COUNT(*) n FROM entries WHERE eventId = ? AND status = 'won'", id),
     waitlist: n("SELECT COUNT(*) n FROM entries WHERE eventId = ? AND status = 'waitlist'", id),
     ticketsMinted: n('SELECT COUNT(*) n FROM tickets WHERE eventId = ?', id),
-    corporateTickets: n('SELECT COUNT(*) n FROM tickets WHERE eventId = ? AND corporate = 1', id),
+    partialWinners: n("SELECT COUNT(*) n FROM entries WHERE eventId = ? AND status = 'partial'", id),
+    ticketsWon: n('SELECT COALESCE(SUM(ticketsWon),0) n FROM entries WHERE eventId = ?', id),
+    invalidListings: n("SELECT COUNT(*) n FROM tickets WHERE eventId = ? AND status = 'listed' AND listingInvalid IS NOT NULL", id),
+    resaleCapPct: ev?.resaleCapPct ?? null,
     listedForResale: n("SELECT COUNT(*) n FROM tickets WHERE eventId = ? AND status = 'listed'", id),
     checkedIn: n("SELECT COUNT(*) n FROM tickets WHERE eventId = ? AND status = 'used'", id),
     resold: kinds.resold || 0,
@@ -292,6 +293,8 @@ function reportError(err, retryNote) {
 
 const rowTables = () => Object.keys(TABLES).filter((t) => t !== 'blocked_attempts' || config.firestoreMirrorAllBlocked)
 const allCollections = () => [...rowTables(), 'blocked_summary', 'event_stats']
+/** Collections from features that were removed (corporate booking); a full resync deletes them. */
+const LEGACY_COLLECTIONS = ['companies', 'corporate_seats']
 
 /** What a collection should contain right now: Map docId -> data builder. */
 function desired(collectionName) {
@@ -364,15 +367,19 @@ async function reconcileNow(reason, mode, collections) {
       for (const d of snapshots[i].docs) if (!want.has(d.id)) ops.push({ c, id: d.id, ref: d.ref, build: null })
       for (const [id, build] of want) if (mode === 'full' || !haveIds.has(id)) ops.push({ c, id, ref: doc(fs, ...BASE, c, id), build })
     })
+    if (mode === 'full') {
+      const legacy = await Promise.all(LEGACY_COLLECTIONS.map((c) => getDocs(collection(fs, ...BASE, c))))
+      for (const snap of legacy) for (const d of snap.docs) ops.push({ c: null, id: d.id, ref: d.ref, build: null, legacy: true })
+    }
     for (let i = 0; i < ops.length; i += BATCH_SIZE) {
       const batch = writeBatch(fs)
-      for (const { c, id, ref, build } of ops.slice(i, i + BATCH_SIZE)) {
+      for (const { c, id, ref, build, legacy } of ops.slice(i, i + BATCH_SIZE)) {
         if (build) {
           const data = build()
           if (!data) continue // row deleted meanwhile; the trigger handles it
           batch.set(ref, data)
           uploaded++
-        } else if (!existsNow(c, id)) {
+        } else if (legacy || !existsNow(c, id)) {
           batch.delete(ref)
           removed++
         }

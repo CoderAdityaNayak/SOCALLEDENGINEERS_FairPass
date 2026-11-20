@@ -1,10 +1,9 @@
 // npm run demo: starts backend + frontend, seeds a ready-to-present FairPass demo, prints logins.
 //
 // Seeds (through the real API, so everything is on Quai Orchard):
-//   - an open lottery event created on-chain (3 lottery tickets, 5% corporate pool)
-//   - organiser, gate staff, 5 verified fans (fans 2-5 already entered with real x402 Work proofs;
-//     fan 1 is left for the live demo), 1 approved company with 5 verified employees (not yet invited,
-//     so the presenter books the 5 seats live)
+//   - an open lottery event created on-chain: face ₹4,500, resale cap +10%, 4 tickets in the draw
+//   - organiser, gate staff, 5 verified fans (fans 2-5 already entered with real x402 Work proofs, asking for
+//     2, 1, 1 and 1 tickets; fan 1 is left for the live demo)
 // Options: --keep   keep the existing demo database instead of resetting it
 //
 // Every account logs in with OTP 123456 (DEMO_FIXED_OTP). Ctrl+C stops both servers.
@@ -30,14 +29,6 @@ const PEOPLE = {
     { phone: '+919000000013', name: 'Meera Iyer' },
     { phone: '+919000000014', name: 'Kabir Shah' },
     { phone: '+919000000015', name: 'Zoya Khan' },
-  ],
-  companyAdmin: { phone: '+919000000020', name: 'Priya Nair (HR, Acme)' },
-  employees: [
-    { phone: '+919000000021', name: 'Arjun Mehta' },
-    { phone: '+919000000022', name: 'Divya Menon' },
-    { phone: '+919000000023', name: 'Rohan Das' },
-    { phone: '+919000000024', name: 'Sneha Pillai' },
-    { phone: '+919000000025', name: 'Nikhil Joshi' },
   ],
 }
 
@@ -127,9 +118,9 @@ async function seed() {
         venue: 'DY Patil Stadium',
         city: 'Mumbai',
         supply: 100,
-        facePrice: '0.01',
+        facePriceInr: 4500,
         resaleCapPct: 10,
-        lotteryTickets: 3,
+        lotteryTickets: 4,
         lotteryClose: close.toISOString(),
       },
     }),
@@ -144,20 +135,12 @@ async function seed() {
   const fanTokens = []
   for (const f of PEOPLE.fans) fanTokens.push(await verified(f))
   step('5 fans verified')
+  const quantities = [null, 2, 1, 1, 1]
   for (let i = 1; i < PEOPLE.fans.length; i++) {
-    const r = await enterWithWork(fanTokens[i], event.id, 1)
+    const r = await enterWithWork(fanTokens[i], event.id, quantities[i])
     if (r.status !== 201) throw new Error(`${PEOPLE.fans[i].name} entry: ${JSON.stringify(r.data)}`)
   }
-  step(`Fans 2-5 entered the lottery with real x402 Work proofs (fan 1, ${PEOPLE.fans[0].name}, is yours to enter live)`)
-
-  const admin = await verified(PEOPLE.companyAdmin)
-  const { company } = await must(
-    api('POST', '/corporate/apply', { token: admin, body: { name: 'Acme Technologies Pvt Ltd', gstin: '27AAPFU0939F1ZV', eventId: event.id } }),
-    'apply',
-  )
-  await must(api('POST', `/corporate/${company.id}/approve`, { token: org, body: { seatQuota: 5 } }), 'approve')
-  for (const e of PEOPLE.employees) await verified(e)
-  step('Acme Technologies approved for 5 seats; its 5 employees have verified IDs (invite them live)')
+  step(`Fans 2-5 entered with real x402 Work proofs, asking for 2, 1, 1, 1 tickets (fan 1, ${PEOPLE.fans[0].name}, is yours to enter live)`)
   return event
 }
 
@@ -185,18 +168,14 @@ async function main() {
     ['Organiser (dashboard)', PEOPLE.organiser],
     ['Gate staff (scanner)', PEOPLE.staff],
     ...PEOPLE.fans.map((f, i) => [i === 0 ? 'Fan 1 (enter live)' : `Fan ${i + 1} (entered)`, f]),
-    ['Company admin', PEOPLE.companyAdmin],
-    ...PEOPLE.employees.map((e, i) => [`Employee ${i + 1}`, e]),
   ]
   console.log(`\n================  FairPass demo is running  ================`)
   console.log(`  App:        ${WEB_URL}`)
   console.log(`  API:        http://localhost:${API_PORT}`)
-  console.log(`  Event:      ${event.name} (id ${event.id}), lottery open, 3 lottery tickets`)
+  console.log(`  Event:      ${event.name} (id ${event.id}), lottery open, ${event.lotteryTickets} tickets in the draw, resale +${event.resaleCapPct}%`)
   console.log(`  OTP for every account: ${OTP}\n`)
   console.log('  Role                       Phone            Name')
   for (const [role, p] of rows) console.log(`  ${role.padEnd(26)} ${p.phone.slice(3).padEnd(16)} ${p.name}`)
-  console.log(`\n  Employee phones to paste in the company page:`)
-  console.log(`  ${PEOPLE.employees.map((e) => e.phone.slice(3)).join(', ')}`)
   console.log(`\n  Bot attack (in another terminal):  npm run bot-attack`)
   console.log('  Ctrl+C stops everything.')
   console.log('=============================================================\n')

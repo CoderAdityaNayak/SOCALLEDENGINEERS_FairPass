@@ -14,30 +14,52 @@ async function deployFixture() {
   const date = Math.floor(Date.now() / 1000) + 30 * 86400
   await fp.createEvent('[Headliner] World Tour', date, FACE, 3, CAP_PCT)
   await fp.addGateStaff(staff.address)
-  await fp.mintTicket(fan.address, 1, false) // token 1
-  await fp.mintTicket(fan.address, 1, true) // token 2 (corporate)
+  await fp.mintTicket(fan.address, 1) // token 1
+  await fp.mintTicket(fan.address, 1) // token 2
   return { fp, organiser, fan, buyer, staff, waitlisted, stranger }
 }
 
 describe('FairPass', () => {
   describe('minting', () => {
-    it('mints tickets and records event + corporate flag', async () => {
+    it('mints tickets and records the event', async () => {
       const { fp, fan } = await loadFixture(deployFixture)
       expect(await fp.ownerOf(1)).to.equal(fan.address)
       expect(await fp.ticketEvent(1)).to.equal(1n)
-      expect(await fp.isCorporate(2)).to.equal(true)
       expect((await fp.events(1)).minted).to.equal(2n)
+    })
+
+    it('mintTickets mints a whole quantity for one winner in one transaction', async () => {
+      const { fp, buyer } = await loadFixture(deployFixture)
+      await fp.createEvent('Big Night', 1, FACE, 10, CAP_PCT) // event 2
+      await expect(fp.mintTickets(buyer.address, 2, 4))
+        .to.emit(fp, 'TicketMinted')
+        .withArgs(3, 2, buyer.address)
+      for (const id of [3, 4, 5, 6]) {
+        expect(await fp.ownerOf(id)).to.equal(buyer.address)
+        expect(await fp.ticketEvent(id)).to.equal(2n)
+      }
+      expect((await fp.events(2)).minted).to.equal(4n)
+      expect(await fp.balanceOf(buyer.address)).to.equal(4n)
+    })
+
+    it('mintTickets reverts past maxSupply (nothing minted) and for quantity 0', async () => {
+      const { fp, buyer } = await loadFixture(deployFixture)
+      await expect(fp.mintTickets(buyer.address, 1, 2)).to.be.revertedWithCustomError(fp, 'SoldOut') // 2 of 3 used
+      expect((await fp.events(1)).minted).to.equal(2n)
+      await expect(fp.mintTickets(buyer.address, 1, 0)).to.be.revertedWithCustomError(fp, 'InvalidQuantity')
+      await fp.mintTickets(buyer.address, 1, 1)
+      expect((await fp.events(1)).minted).to.equal(3n)
     })
 
     it('reverts minting past maxSupply', async () => {
       const { fp, fan } = await loadFixture(deployFixture)
-      await fp.mintTicket(fan.address, 1, false) // 3 of 3
-      await expect(fp.mintTicket(fan.address, 1, false)).to.be.revertedWithCustomError(fp, 'SoldOut')
+      await fp.mintTicket(fan.address, 1) // 3 of 3
+      await expect(fp.mintTicket(fan.address, 1)).to.be.revertedWithCustomError(fp, 'SoldOut')
     })
 
     it('only the owner can create events and mint', async () => {
       const { fp, stranger } = await loadFixture(deployFixture)
-      await expect(fp.connect(stranger).mintTicket(stranger.address, 1, false)).to.be.revertedWithCustomError(
+      await expect(fp.connect(stranger).mintTicket(stranger.address, 1)).to.be.revertedWithCustomError(
         fp,
         'OwnableUnauthorizedAccount',
       )
@@ -49,7 +71,7 @@ describe('FairPass', () => {
 
     it('reverts minting for an unknown event', async () => {
       const { fp, fan } = await loadFixture(deployFixture)
-      await expect(fp.mintTicket(fan.address, 99, false)).to.be.revertedWithCustomError(fp, 'UnknownEvent')
+      await expect(fp.mintTicket(fan.address, 99)).to.be.revertedWithCustomError(fp, 'UnknownEvent')
     })
   })
 
@@ -96,10 +118,6 @@ describe('FairPass', () => {
         .withArgs(1, fan.address, MAX_RESALE)
     })
 
-    it('a corporate ticket cannot be listed', async () => {
-      const { fp, fan } = await loadFixture(deployFixture)
-      await expect(fp.connect(fan).listForResale(2, FACE)).to.be.revertedWithCustomError(fp, 'CorporateTicket')
-    })
 
     it('only the ticket owner can list', async () => {
       const { fp, stranger } = await loadFixture(deployFixture)
@@ -135,6 +153,52 @@ describe('FairPass', () => {
     })
   })
 
+  describe('organiser-controlled resale cap', () => {
+    it('setResaleCap changes the cap and emits ResaleCapChanged(old, new)', async () => {
+      const { fp } = await loadFixture(deployFixture)
+      await expect(fp.setResaleCap(1, 15)).to.emit(fp, 'ResaleCapChanged').withArgs(1, CAP_PCT, 15)
+      expect((await fp.events(1)).resaleCapPct).to.equal(15n)
+      expect(await fp.maxResalePrice(1)).to.equal((FACE * 115n) / 100n)
+    })
+
+    it('only the owner can change it; it must be 0-100 and the event must exist', async () => {
+      const { fp, stranger } = await loadFixture(deployFixture)
+      await expect(fp.connect(stranger).setResaleCap(1, 20)).to.be.revertedWithCustomError(fp, 'OwnableUnauthorizedAccount')
+      await expect(fp.setResaleCap(1, 101)).to.be.revertedWithCustomError(fp, 'InvalidCap')
+      await expect(fp.setResaleCap(99, 5)).to.be.revertedWithCustomError(fp, 'UnknownEvent')
+      await expect(fp.createEvent('x', 1, FACE, 1, 101)).to.be.revertedWithCustomError(fp, 'InvalidCap')
+      await expect(fp.setResaleCap(1, 100)).to.emit(fp, 'ResaleCapChanged')
+    })
+
+    it('cap 0 means resale only at face price', async () => {
+      const { fp, fan } = await loadFixture(deployFixture)
+      await fp.setResaleCap(1, 0)
+      await expect(fp.connect(fan).listForResale(1, FACE + 1n)).to.be.revertedWithCustomError(fp, 'PriceAboveCap')
+      await expect(fp.connect(fan).listForResale(1, FACE)).to.emit(fp, 'TicketListed')
+    })
+
+    it('raising the cap allows a higher listing', async () => {
+      const { fp, fan } = await loadFixture(deployFixture)
+      const at15 = (FACE * 115n) / 100n
+      await expect(fp.connect(fan).listForResale(1, at15)).to.be.revertedWithCustomError(fp, 'PriceAboveCap')
+      await fp.setResaleCap(1, 15)
+      await expect(fp.connect(fan).listForResale(1, at15)).to.emit(fp, 'TicketListed')
+    })
+
+    it('lowering the cap blocks buying an existing listing above the new cap; raising it again unblocks it', async () => {
+      const { fp, fan, buyer } = await loadFixture(deployFixture)
+      await fp.connect(fan).listForResale(1, MAX_RESALE) // +10%, valid when listed
+      await fp.setResaleCap(1, 5)
+      await expect(fp.connect(buyer).buyResale(1, { value: MAX_RESALE }))
+        .to.be.revertedWithCustomError(fp, 'PriceAboveCap')
+        .withArgs(MAX_RESALE, (FACE * 105n) / 100n)
+      expect(await fp.ownerOf(1)).to.equal(fan.address)
+      await fp.setResaleCap(1, 10)
+      await fp.connect(buyer).buyResale(1, { value: MAX_RESALE })
+      expect(await fp.ownerOf(1)).to.equal(buyer.address)
+    })
+  })
+
   describe('return to pool', () => {
     it('return to pool + reassign moves the ticket to the waitlisted fan', async () => {
       const { fp, organiser, fan, waitlisted } = await loadFixture(deployFixture)
@@ -146,11 +210,6 @@ describe('FairPass', () => {
       expect(await fp.ownerOf(1)).to.equal(waitlisted.address)
     })
 
-    it('corporate tickets can be returned to the pool', async () => {
-      const { fp, organiser, fan } = await loadFixture(deployFixture)
-      await fp.connect(fan).returnToPool(2)
-      expect(await fp.ownerOf(2)).to.equal(organiser.address)
-    })
 
     it('reassign only works for pooled tickets and only for the owner', async () => {
       const { fp, fan, waitlisted, stranger } = await loadFixture(deployFixture)

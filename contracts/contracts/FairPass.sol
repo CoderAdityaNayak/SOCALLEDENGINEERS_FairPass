@@ -20,6 +20,8 @@ contract FairPass is ERC721, Ownable, ReentrancyGuard {
     }
 
     uint256 public constant ROYALTY_PCT = 2;
+    uint8 public constant MAX_RESALE_CAP_PCT = 100;
+    uint32 public constant MAX_MINT_BATCH = 100;
 
     uint256 public nextEventId = 1;
     uint256 public nextTokenId = 1;
@@ -29,13 +31,13 @@ contract FairPass is ERC721, Ownable, ReentrancyGuard {
     mapping(uint256 => bool) public used; // tokenId => checked in at the gate
     mapping(uint256 => uint256) public listedPrice; // tokenId => resale price (0 = not listed)
     mapping(address => bool) public gateStaff;
-    mapping(uint256 => bool) public isCorporate; // corporate tickets can't be resold
 
     /// @dev True only while one of the allowed transfer paths is running.
     bool private _transferAllowed;
 
     event EventCreated(uint256 indexed eventId, string name, uint256 date, uint256 facePrice, uint32 maxSupply, uint8 resaleCapPct);
-    event TicketMinted(uint256 indexed tokenId, uint256 indexed eventId, address indexed to, bool corporate);
+    event TicketMinted(uint256 indexed tokenId, uint256 indexed eventId, address indexed to);
+    event ResaleCapChanged(uint256 indexed eventId, uint8 oldPct, uint8 newPct);
     event TicketListed(uint256 indexed tokenId, address indexed seller, uint256 price);
     event TicketListingCancelled(uint256 indexed tokenId);
     event TicketResold(uint256 indexed tokenId, address indexed seller, address indexed buyer, uint256 price, uint256 royalty);
@@ -50,7 +52,8 @@ contract FairPass is ERC721, Ownable, ReentrancyGuard {
     error SoldOut();
     error NotTicketOwner();
     error NotGateStaff();
-    error CorporateTicket();
+    error InvalidCap();
+    error InvalidQuantity();
     error TicketAlreadyUsed();
     error PriceAboveCap(uint256 price, uint256 maxPrice);
     error InvalidPrice();
@@ -89,21 +92,46 @@ contract FairPass is ERC721, Ownable, ReentrancyGuard {
         uint8 resaleCapPct
     ) external onlyOwner returns (uint256 eventId) {
         if (maxSupply == 0 || facePrice == 0) revert InvalidPrice();
+        if (resaleCapPct > MAX_RESALE_CAP_PCT) revert InvalidCap();
         eventId = nextEventId++;
         events[eventId] = Event(name, date, facePrice, maxSupply, 0, resaleCapPct, msg.sender);
         emit EventCreated(eventId, name, date, facePrice, maxSupply, resaleCapPct);
     }
 
-    function mintTicket(address to, uint256 eventId, bool corporate) external onlyOwner returns (uint256 tokenId) {
+    function mintTicket(address to, uint256 eventId) external onlyOwner returns (uint256 tokenId) {
+        return _mintBatch(to, eventId, 1);
+    }
+
+    /// @notice Mints `quantity` tickets for one winner in a single transaction. Returns the first token id
+    ///         (the rest follow consecutively).
+    function mintTickets(address to, uint256 eventId, uint32 quantity) external onlyOwner returns (uint256 firstTokenId) {
+        if (quantity == 0 || quantity > MAX_MINT_BATCH) revert InvalidQuantity();
+        return _mintBatch(to, eventId, quantity);
+    }
+
+    function _mintBatch(address to, uint256 eventId, uint32 quantity) private returns (uint256 firstTokenId) {
         Event storage e = events[eventId];
         if (e.maxSupply == 0) revert UnknownEvent();
-        if (e.minted >= e.maxSupply) revert SoldOut();
-        e.minted++;
-        tokenId = nextTokenId++;
-        ticketEvent[tokenId] = eventId;
-        isCorporate[tokenId] = corporate;
-        _safeMint(to, tokenId);
-        emit TicketMinted(tokenId, eventId, to, corporate);
+        if (uint256(e.minted) + quantity > e.maxSupply) revert SoldOut();
+        e.minted += quantity;
+        firstTokenId = nextTokenId;
+        for (uint32 i = 0; i < quantity; i++) {
+            uint256 tokenId = nextTokenId++;
+            ticketEvent[tokenId] = eventId;
+            _safeMint(to, tokenId);
+            emit TicketMinted(tokenId, eventId, to);
+        }
+    }
+
+    /// @notice Organiser changes how far above face price this event's tickets may be resold (0 = face price only).
+    ///         Applies immediately, including to existing listings: buyResale re-checks the current cap.
+    function setResaleCap(uint256 eventId, uint8 newPct) external onlyOwner {
+        Event storage e = events[eventId];
+        if (e.maxSupply == 0) revert UnknownEvent();
+        if (newPct > MAX_RESALE_CAP_PCT) revert InvalidCap();
+        uint8 oldPct = e.resaleCapPct;
+        e.resaleCapPct = newPct;
+        emit ResaleCapChanged(eventId, oldPct, newPct);
     }
 
     function addGateStaff(address staff) external onlyOwner {
@@ -135,7 +163,6 @@ contract FairPass is ERC721, Ownable, ReentrancyGuard {
     }
 
     function listForResale(uint256 tokenId, uint256 price) external onlyTicketOwner(tokenId) {
-        if (isCorporate[tokenId]) revert CorporateTicket();
         if (used[tokenId]) revert TicketAlreadyUsed();
         if (price == 0) revert InvalidPrice();
         uint256 cap = maxResalePrice(tokenId);
@@ -151,11 +178,14 @@ contract FairPass is ERC721, Ownable, ReentrancyGuard {
     }
 
     /// @notice Buy a listed ticket at exactly its listed price. The seller gets the price minus a 2% organiser royalty.
+    ///         The price is re-checked against the CURRENT cap, so lowering the cap blocks listings above it.
     function buyResale(uint256 tokenId) external payable nonReentrant allowTransfer {
         uint256 price = listedPrice[tokenId];
         if (price == 0) revert NotListed();
         if (msg.value != price) revert WrongPayment(msg.value, price);
         if (used[tokenId]) revert TicketAlreadyUsed();
+        uint256 cap = maxResalePrice(tokenId);
+        if (price > cap) revert PriceAboveCap(price, cap);
         address seller = ownerOf(tokenId);
         if (seller == msg.sender) revert InvalidAddress();
 

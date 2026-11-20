@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router'
 import { QRCodeSVG } from 'qrcode.react'
 import { api } from '../lib/api.js'
-import { dateLong } from '../lib/format.js'
+import { dateLong, inr } from '../lib/format.js'
 import { ErrorNote, Spinner } from '../components/ui.jsx'
 import * as I from '../components/Icons.jsx'
 
@@ -177,9 +177,16 @@ export default function TicketPage() {
           Can't go?
         </Link>
       )}
+      {ticket.status === 'listed' && ticket.listingInvalid && (
+        <p role="alert" className="mt-5 flex gap-2 rounded-[14px] border border-err/50 bg-err/10 p-3 text-sm text-err-soft">
+          <I.Alert size={16} className="mt-0.5 shrink-0" />
+          Your listing at {inr(ticket.listedPriceInr)} is above the new resale cap (max {inr(ticket.maxResalePriceInr)}, +{ticket.resaleCapPct}%) and
+          can't be bought.
+        </p>
+      )}
       {ticket.status === 'listed' && (
-        <Link to={`/tickets/${ticket.tokenId}/resale`} className="mt-5 flex min-h-12 items-center justify-center rounded-[14px] border border-line font-semibold">
-          Listed for {ticket.listedPrice} QUAI · manage
+        <Link to={`/tickets/${ticket.tokenId}/resale`} className="mt-3 flex min-h-12 items-center justify-center rounded-[14px] border border-line font-semibold">
+          Listed for {inr(ticket.listedPriceInr)} · manage
         </Link>
       )}
     </div>

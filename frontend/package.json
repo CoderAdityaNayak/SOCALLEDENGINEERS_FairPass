@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@noble/hashes": "^2.4.0",
+    "firebase": "^13.4.0",
     "html5-qrcode": "^2.3.8",
     "qrcode.react": "^4.2.0",
     "quais": "1.0.0-alpha.58",

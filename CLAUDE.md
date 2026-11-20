@@ -14,18 +14,26 @@ Goal: fans get tickets at a fair price, resale is possible but can't be exploite
 
 ## Solution
 
-1. **Fair entry**: lottery instead of first-come. One verified ID = one entry per event (max 2 tickets per ID).
-   Every entry carries an **x402 Work** proof-of-work (cheap for one fan, very expensive for a bot sending millions).
-   The draw uses **commit-reveal** (publish sha256(seed) when the lottery opens, reveal seed at draw) so anyone can verify it.
+1. **Fair entry**: lottery instead of first-come. **One entry per verified person per event**; the fan chooses how many
+   tickets they want (`quantity`, min 1, max the tickets in the draw). There is NO per-person ticket cap any more.
+   Every entry carries an **x402 Work** proof-of-work and the per-IP rate limit applies (these ARE the anti-bot
+   protection and must stay). The draw uses **commit-reveal** (publish sha256(seed) when the lottery opens, reveal seed
+   at draw) so anyone can verify it. In draw order each winner gets the quantity they asked for; when supply runs out
+   mid-draw that entry gets what's left (`ticketsWon`, status `partial`) and the rest of its quantity is waitlisted;
+   everyone after is waitlisted.
 2. **Fair resale**: tickets are ERC-721 NFTs that can ONLY move through the contract. Resale price ≤
-   `facePrice × (100 + resaleCapPct) / 100` (default cap 10%). **Return to pool**: seller gets face price back and the
-   ticket goes to the next waitlisted fan (seller can't pick the buyer, which kills cash side deals).
+   `facePrice × (100 + resaleCapPct) / 100`. **The organiser controls `resaleCapPct` per event** (0–100, default 10;
+   0 = resale only at face price) with `setResaleCap` on-chain. `buyResale` re-checks the CURRENT cap, so lowering the
+   cap makes existing listings above it unbuyable; the backend marks them `listingInvalid = "invalid – above new cap"`
+   and the seller sees a warning. **Return to pool**: seller gets face price back and the ticket goes to the next
+   waitlisted fan (seller can't pick the buyer, which kills cash side deals).
 3. **Real tickets**: only contract-minted tokens are valid. Fan QR = `{tokenId, timestamp, signature}`, refreshed every 30 s.
    Gate checks: fresh (< 30 s), signer == `ownerOf(tokenId)` on-chain, not used → then `markUsed` on-chain.
-4. **Corporate booking**: a verified company (GSTIN, mock-verified) books N seats; each seat tied to a verified employee
-   (limit is per attendee, not per buyer). One ID appears only once per event across ALL pools. Corporate tickets
-   can't be resold, only returned to the pool. Manager can swap a seat to another verified employee (`swapsLeft = 2`).
-   Corporate pool max = 5% of supply.
+4. ~~Corporate booking~~ was **removed** (contract, backend, Firestore, frontend, demo). Don't reintroduce it.
+
+**Prices in ₹**: on-chain prices are QUAI (wei). Each event also stores `facePriceInr`; the UI shows ₹ using a fixed
+mock rate `INR_PER_QUAI` (default 450000, so 0.01 QUAI = ₹4,500). Payments are mocked fiat. Listing prices are entered
+in ₹ and converted to wei with floor division, then checked against the exact on-chain cap in wei.
 
 ## Tech (must follow)
 
@@ -86,32 +94,43 @@ Goal: fans get tickets at a fair price, resale is possible but can't be exploite
 
 1. **Setup**: monorepo, .gitignore, .env.example per part, this file, git. ✅
 2. **Contract** ✅ `contracts/contracts/FairPass.sol`: `struct Event {name, date, facePrice, maxSupply, minted, resaleCapPct, organiser}`;
-   mappings events, ticketEvent, used, listedPrice, gateStaff, isCorporate; `createEvent` / `mintTicket(to,eventId,corporate)` onlyOwner;
-   `listForResale` (owner, not corporate, not used, ≤ cap); `cancelListing`; `buyResale` payable (exact price, seller paid,
-   2% royalty to organiser); `returnToPool` (to contract owner); `reassign` onlyOwner; `markUsed` onlyGateStaff;
-   `isValid`; `addGateStaff`. `_update` override: tokens move ONLY via mint/buyResale/returnToPool/reassign.
-   Events TicketMinted/Listed/Resold/Returned/Reassigned/Used. Hardhat tests for every rule.
+   mappings events, ticketEvent, used, listedPrice, gateStaff; `createEvent` (cap 0–100) / `mintTicket(to,eventId)` /
+   `mintTickets(to,eventId,quantity)` onlyOwner; `setResaleCap(eventId,newPct)` onlyOwner (0–100, emits
+   `ResaleCapChanged(eventId, oldPct, newPct)`); `listForResale` (owner, not used, ≤ current cap); `cancelListing`;
+   `buyResale` payable (exact price, re-checks the CURRENT cap, seller paid, 2% royalty to organiser); `returnToPool`
+   (to contract owner); `reassign` onlyOwner; `markUsed` onlyGateStaff; `isValid`; `addGateStaff`. `_update` override:
+   tokens move ONLY via mint/buyResale/returnToPool/reassign. Hardhat tests for every rule.
 3. **Deploy** ✅: `contracts/scripts/deploy.js` deploys, creates "[Headliner] World Tour" (0.01 QUAI, 100 supply, cap 10),
    adds deployer as gate staff, writes `{address, abi, chainId}` to `backend/src/contract.json` and `frontend/src/contract.json`.
-   User runs it with their funded Pelagus Cyprus-1 key. Fallback: local Hardhat network.
-4. **Backend core** ✅: SQLite tables users, events, entries, companies, corporate_seats, tickets, scans, blocked_attempts;
-   `src/services/quai.js`; mock OTP auth (OTP printed to console) + JWT + custodial wallet; KYC (ID → SHA-256 hash, duplicate → 409
-   + blocked_attempts); events CRUD (organiser → createEvent on-chain); role middleware; random block/row/seat at mint.
-5. **Lottery + anti-bot** ✅: `POST /events/:id/enter` (x402 Work + verified + one per idHash + IP rate limit; every rejection logged);
-   commit-reveal draw `POST /events/:id/draw`, `GET /events/:id/draw-proof`, `GET /events/:id/stats`; `scripts/bot-attack.js` (10,000 attempts).
-6. **Tickets/gate/resale/corporate** ✅: `/me/tickets`, `/tickets/:id/qr`, `/gate/verify` (EXPIRED / NOT_ON_CHAIN / NOT_OWNER /
-   ALREADY_USED / VALID), list/buy/return, corporate apply/approve/seats/swap, `scripts/e2e.js`.
+   User runs it with their funded Pelagus Cyprus-1 key (`npm run deploy`). Fallback: local Hardhat network.
+4. **Backend core** ✅: SQLite tables users, events, entries, tickets, scans, blocked_attempts, activity, pow_challenges;
+   `src/services/quai.js`; mock OTP auth (OTP printed to console) + JWT + custodial wallet; KYC (ID → keyed hash, duplicate → 409
+   + blocked_attempts); events (organiser → createEvent on-chain, `facePriceInr` + `resaleCapPct`); role middleware;
+   random block/row/seat at mint.
+5. **Lottery + anti-bot** ✅: `POST /events/:id/enter {quantity}` (x402 Work + verified + one entry per idHash per event +
+   IP rate limit; every rejection logged); commit-reveal draw with partial fill `POST /events/:id/draw`,
+   `GET /events/:id/draw-proof`, `GET /events/:id/stats`; `scripts/bot-attack.js` (10,000 attempts).
+6. **Tickets/gate/resale** ✅: `/me/tickets`, `/tickets/:id/qr`, `/gate/verify` (EXPIRED / NOT_ON_CHAIN / NOT_OWNER /
+   ALREADY_USED / VALID), list (`priceInr`) / cancel / buy / return, `POST /events/:id/resale-cap {pct}` (organiser:
+   setResaleCap on Quai, wait for confirmation, save pct + tx, mark listings above the new max invalid), `scripts/e2e.js`.
 7. **Frontend** ✅: dark mobile-first design (bg #0B0D12, cards #151922, borders #262C38, text #F2F4F8, muted #9AA3B2, lime #C6F432 with
    dark text, error #C62828/#FF8A8A; Space Grotesk 700 headings, Inter body; radius 14–22px; stroke SVG icons; no emoji).
-   Pages: Login, Home/Event, Enter lottery, My ticket, Resale, Gate scanner, Organiser dashboard, Corporate booking; Pelagus connect; role nav.
-8. **Demo** ✅: `npm run demo` (resets backend/data/demo.db, DEMO_MODE=1 + DEMO_FIXED_OTP=123456, creates a fresh on-chain event with 3 lottery tickets, seeds organiser 9000000001, staff 9000000002, fans 9000000011-15 (2-5 pre-entered), company admin 9000000020 with Acme approved for 5 seats, employees 9000000021-25 verified but not invited), README.md.
+   Pages: Login, Home/Event, Enter lottery (quantity input), My ticket, Resale, Gate scanner, Organiser dashboard
+   (create-event form with resale % + live ₹ preview, "Resale settings" card); Pelagus connect; role nav.
+   The event page and resale page read the live cap from Firestore `fairpass/live/events/{id}` with `onSnapshot`
+   (frontend `firebase` + `VITE_FIREBASE_*`), falling back to API polling when Firebase isn't configured.
+8. **Demo** ✅: `npm run demo` (resets backend/data/demo.db, DEMO_MODE=1 + DEMO_FIXED_OTP=123456, creates a fresh on-chain
+   event with 3 lottery tickets and cap 10%, seeds organiser 9000000001, staff 9000000002, fans 9000000011-15 (2-5
+   pre-entered)), README.md.
 
 ### Demo script
 
 1. bot-attack → dashboard shows blocked count
-2. fans enter (PoW visible) → organiser runs draw → winners minted on Quai (Quaiscan link)
-3. fan lists at huge price → rejected; return to pool → waitlisted fan gets it
-4. company books 5 seats for 5 verified employees
+2. fans enter choosing how many tickets (PoW visible) → organiser runs draw → winners minted on Quai (Quaiscan link)
+3. organiser sets resale to 15% (Resale settings card, on-chain tx) → a winner tries to list above +15% → rejected
+   (red error); lists at +12% instead → organiser lowers the cap to 5% → that listing shows "invalid – above new cap"
+   for the seller and can't be bought
+4. return to pool → the waitlisted fan gets the ticket
 5. gate: expired QR → REJECTED, fake → REJECTED, real → VALID, rescan → ALREADY_USED
 
 ## Folder structure

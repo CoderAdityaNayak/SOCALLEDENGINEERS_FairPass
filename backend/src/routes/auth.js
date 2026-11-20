@@ -5,7 +5,6 @@ import { config } from '../config.js'
 import { db, logBlocked } from '../db.js'
 import { HttpError, publicUser, requireAuth, signToken } from '../auth.js'
 import { createUser, getUser, getUserByPhone, hashId, normalizeIdNumber, normalizePhone } from '../services/users.js'
-import { onUserVerified } from '../services/hooks.js'
 
 export const router = Router()
 
@@ -59,7 +58,6 @@ router.post('/kyc', requireAuth, (req, res) => {
     req.user.id,
   )
   const user = getUser(req.user.id)
-  onUserVerified(user)
   res.json({ user: publicUser(user) })
 })
 

@@ -20,8 +20,9 @@ export function drawOrder(seed, entries) {
 }
 
 /**
- * Runs the draw (once). Walks entries in draw order giving each its 1 or 2 tickets while the
- * lottery allocation lasts; everyone after that joins the waitlist in draw order.
+ * Runs the draw (once). Walks entries in draw order giving each the quantity it asked for while the
+ * lottery allocation lasts. The entry where supply runs out gets what's left (status 'partial'; the rest of
+ * its quantity waits on the waitlist); everyone after that is waitlisted, in draw order.
  */
 export function runDraw(event) {
   if (event.drawnAt) throw Object.assign(new Error('The draw already happened'), { status: 409 })
@@ -31,50 +32,56 @@ export function runDraw(event) {
   const ordered = drawOrder(event.seed, entries)
   let remaining = event.lotteryTickets
   let winners = 0
+  let partial = 0
   let waitlist = 0
-  const update = db.prepare('UPDATE entries SET status = ?, drawRank = ?, drawKey = ? WHERE id = ?')
+  const update = db.prepare('UPDATE entries SET status = ?, ticketsWon = ?, drawRank = ?, drawKey = ? WHERE id = ?')
 
   db.transaction(() => {
     ordered.forEach((e, i) => {
-      const won = e.quantity <= remaining
-      if (won) {
-        remaining -= e.quantity
-        winners++
-      } else waitlist++
-      update.run(won ? 'won' : 'waitlist', i + 1, e.drawKey, e.id)
+      const given = Math.min(e.quantity, remaining)
+      remaining -= given
+      const status = given === e.quantity ? 'won' : given > 0 ? 'partial' : 'waitlist'
+      if (status === 'won') winners++
+      else if (status === 'partial') partial++
+      else waitlist++
+      update.run(status, given, i + 1, e.drawKey, e.id)
     })
     const now = new Date().toISOString()
     db.prepare('UPDATE events SET drawnAt = ?, lotteryClose = MIN(lotteryClose, ?) WHERE id = ?').run(now, now, event.id)
   })()
 
-  logActivity({ eventId: event.id, kind: 'draw', detail: `${winners} winners, ${waitlist} waitlisted` })
-  return { entries: entries.length, winners, waitlist, ticketsAllocated: event.lotteryTickets - remaining }
+  const ticketsAllocated = event.lotteryTickets - remaining
+  logActivity({ eventId: event.id, kind: 'draw', detail: `${winners} won, ${partial} partial, ${waitlist} waitlisted, ${ticketsAllocated} tickets` })
+  return { entries: entries.length, winners, partial, waitlist, ticketsAllocated }
 }
 
 /** Minting progress per event, for the dashboard. */
 export const mintProgress = new Map()
 
 /**
- * Mints every ticket owed to winners that isn't minted yet. Safe to call again after a failure.
- * Transactions are broadcast back-to-back and confirmed in parallel (see quai.js).
+ * Mints every ticket owed to winners that isn't minted yet (one batch transaction per winner).
+ * Safe to call again after a failure. Transactions are broadcast back-to-back and confirmed in parallel.
  */
 export async function mintWinners(event) {
   const owed = db
-    .prepare("SELECT * FROM entries WHERE eventId = ? AND status = 'won' AND ticketsMinted < quantity ORDER BY drawRank")
+    .prepare(
+      "SELECT * FROM entries WHERE eventId = ? AND status IN ('won','partial') AND ticketsMinted < ticketsWon ORDER BY drawRank",
+    )
     .all(event.id)
-  const jobs = owed.flatMap((e) => Array.from({ length: e.quantity - e.ticketsMinted }, () => e))
-  const progress = { total: jobs.length, done: 0, failed: 0, running: true, errors: [], startedAt: Date.now() }
+  const total = owed.reduce((n, e) => n + (e.ticketsWon - e.ticketsMinted), 0)
+  const progress = { total, done: 0, failed: 0, running: true, errors: [], startedAt: Date.now() }
   mintProgress.set(event.id, progress)
 
-  const bump = db.prepare('UPDATE entries SET ticketsMinted = ticketsMinted + 1 WHERE id = ?')
+  const bump = db.prepare('UPDATE entries SET ticketsMinted = ticketsMinted + ? WHERE id = ?')
   await Promise.all(
-    jobs.map(async (entry) => {
+    owed.map(async (entry) => {
+      const n = entry.ticketsWon - entry.ticketsMinted
       try {
-        await mintToUser(event, getUser(entry.userId))
-        bump.run(entry.id)
-        progress.done++
+        await mintToUser(event, getUser(entry.userId), n)
+        bump.run(n, entry.id)
+        progress.done += n
       } catch (err) {
-        progress.failed++
+        progress.failed += n
         progress.errors.push(`entry ${entry.id}: ${err.message}`)
         console.error(`[draw] mint for entry ${entry.id} failed:`, err.message)
       }

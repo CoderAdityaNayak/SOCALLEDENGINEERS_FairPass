@@ -10,7 +10,6 @@ import { router as eventsRouter } from './routes/events.js'
 import { router as lotteryRouter } from './routes/lottery.js'
 import { router as ticketsRouter } from './routes/tickets.js'
 import { router as gateRouter } from './routes/gate.js'
-import { router as corporateRouter } from './routes/corporate.js'
 
 export function createApp() {
   const app = express()
@@ -38,7 +37,6 @@ export function createApp() {
   app.use('/auth', authRouter)
   app.use('/events', eventsRouter)
   app.use('/events', lotteryRouter)
-  app.use('/corporate', corporateRouter)
   app.use(ticketsRouter)
   app.use(gateRouter)
 

@@ -1,9 +1,10 @@
-// Minting tickets with a random seat, and reading them back.
+// Minting tickets with random seats, and reading them back.
 import crypto from 'node:crypto'
 import { db, logActivity } from '../db.js'
 import * as quai from './quai.js'
 
 const BLOCKS = ['A', 'B', 'C', 'D', 'E', 'F']
+const MINT_BATCH = 50 // tickets per transaction (the contract allows up to 100)
 
 /** A random free block-row-seat for this event (stored in the DB, shown on the ticket). */
 export function assignSeat(eventId) {
@@ -14,20 +15,25 @@ export function assignSeat(eventId) {
   }
 }
 
-/** Mints a ticket on-chain to the user's wallet and records it with a random seat. */
-export async function mintToUser(event, user, { corporate = false } = {}) {
-  const { tokenId, hash } = await quai.mintTicket(user.walletAddress, event.chainEventId, corporate)
-  const seat = assignSeat(event.id)
-  db.prepare('INSERT INTO tickets (tokenId, eventId, ownerUserId, seat, corporate, mintTx) VALUES (?, ?, ?, ?, ?, ?)').run(
-    tokenId,
-    event.id,
-    user.id,
-    seat,
-    corporate ? 1 : 0,
-    hash,
-  )
-  logActivity({ eventId: event.id, kind: 'minted', tokenId, userId: user.id, txHash: hash, detail: corporate ? 'corporate' : null })
-  return getTicket(tokenId)
+/**
+ * Mints `quantity` tickets on-chain to the user's wallet (batched into as few transactions as possible)
+ * and records each with a random seat. Returns the ticket rows.
+ */
+export async function mintToUser(event, user, quantity = 1) {
+  const tickets = []
+  for (let left = quantity; left > 0; left -= MINT_BATCH) {
+    const n = Math.min(left, MINT_BATCH)
+    const { tokenIds, hash } = await quai.mintTickets(user.walletAddress, event.chainEventId, n)
+    const insert = db.prepare('INSERT INTO tickets (tokenId, eventId, ownerUserId, seat, mintTx) VALUES (?, ?, ?, ?, ?)')
+    db.transaction(() => {
+      for (const tokenId of tokenIds) {
+        insert.run(tokenId, event.id, user.id, assignSeat(event.id), hash)
+        logActivity({ eventId: event.id, kind: 'minted', tokenId, userId: user.id, txHash: hash })
+      }
+    })()
+    tickets.push(...tokenIds.map(getTicket))
+  }
+  return tickets
 }
 
 export const getTicket = (tokenId) => db.prepare('SELECT * FROM tickets WHERE tokenId = ?').get(tokenId)

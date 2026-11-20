@@ -6,7 +6,7 @@ import { useSession } from '../lib/session.jsx'
 import { Button, Card, ErrorNote, Field } from '../components/ui.jsx'
 import * as I from '../components/Icons.jsx'
 
-const HOME_FOR_ROLE = { organiser: '/organiser', staff: '/gate', company_admin: '/corporate', fan: '/' }
+const HOME_FOR_ROLE = { organiser: '/organiser', staff: '/gate', fan: '/' }
 
 export default function Login() {
   const { user, signIn, setUser } = useSession()

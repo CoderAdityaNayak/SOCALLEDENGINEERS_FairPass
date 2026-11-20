@@ -6,6 +6,7 @@ export const explorerAddress = (a) => `${EXPLORER}/address/${a}`
 
 export const shortAddr = (a) => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : '')
 export const quai = (v) => `${Number(v).toLocaleString('en-IN', { maximumFractionDigits: 6 })} QUAI`
+export const inr = (v) => (v == null || Number.isNaN(Number(v)) ? '₹–' : `₹${Number(v).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`)
 export const num = (n) => Number(n || 0).toLocaleString('en-IN')
 
 export const dateLong = (iso) =>

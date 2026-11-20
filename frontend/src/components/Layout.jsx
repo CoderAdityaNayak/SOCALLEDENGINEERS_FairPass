@@ -53,12 +53,6 @@ const NAV = {
   fan: [
     { to: '/', label: 'Event', icon: I.Home, end: true },
     { to: '/tickets', label: 'Tickets', icon: I.Ticket },
-    { to: '/corporate', label: 'Company', icon: I.Building },
-  ],
-  company_admin: [
-    { to: '/', label: 'Event', icon: I.Home, end: true },
-    { to: '/tickets', label: 'Tickets', icon: I.Ticket },
-    { to: '/corporate', label: 'Company', icon: I.Building },
   ],
   staff: [
     { to: '/gate', label: 'Scan', icon: I.Scan },

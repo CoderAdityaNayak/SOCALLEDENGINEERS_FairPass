@@ -38,6 +38,7 @@ export const config = {
   x402Mode: process.env.X402_MODE || 'facilitator', // 'facilitator' (hosted x402 Work) or 'local'
 
   qrMaxAgeSeconds: Number(process.env.QR_MAX_AGE_SECONDS || 30),
+  inrPerQuai: Number(process.env.INR_PER_QUAI || 450000), // mock display rate: 0.01 QUAI = ₹4,500
   rateLimitPerMinute: Number(process.env.RATE_LIMIT_PER_MINUTE || 30),
 
   // Gas sponsoring for custodial wallets (mocked fiat on-ramp)

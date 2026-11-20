@@ -185,10 +185,17 @@ export async function createEvent({ name, date, facePrice, maxSupply, resaleCapP
   return { chainEventId: Number(ev.args.eventId), hash: r.hash }
 }
 
-export async function mintTicket(to, chainEventId, corporate = false) {
-  const r = await send(organiser, 'mintTicket', 'mintTicket', [to, chainEventId, corporate])
-  const ev = r.events.find((e) => e.name === 'TicketMinted')
-  return { tokenId: Number(ev.args.tokenId), hash: r.hash }
+/** Mints `quantity` tickets to one wallet in a single transaction. Returns all new token ids. */
+export async function mintTickets(to, chainEventId, quantity = 1) {
+  const r = await send(organiser, 'mintTickets', 'mintTickets', [to, chainEventId, quantity])
+  const tokenIds = r.events.filter((e) => e.name === 'TicketMinted').map((e) => Number(e.args.tokenId))
+  if (tokenIds.length !== quantity) throw new Error(`mintTickets: expected ${quantity} tickets, saw ${tokenIds.length}`)
+  return { tokenIds, hash: r.hash }
+}
+
+/** Organiser changes the event's resale cap on-chain; waits for confirmation. */
+export async function setResaleCap(chainEventId, pct) {
+  return send(organiser, 'setResaleCap', 'setResaleCap', [chainEventId, pct])
 }
 
 export async function markUsed(tokenId) {

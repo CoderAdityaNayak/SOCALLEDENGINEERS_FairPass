@@ -4,10 +4,25 @@ import path from 'node:path'
 import Database from 'better-sqlite3'
 import { config } from './config.js'
 
+const SCHEMA_VERSION = '2' // v2: no corporate tables, any ticket quantity, partial wins, organiser resale cap
+
 fs.mkdirSync(path.dirname(config.databasePath), { recursive: true })
 export const db = new Database(config.databasePath)
 db.pragma('journal_mode = WAL')
 db.pragma('foreign_keys = ON')
+
+// A database belongs to one contract and one schema version. Data made for an older contract (or schema)
+// would point at tokens that don't exist on the current contract, so refuse to start instead of misbehaving.
+db.exec('CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
+const meta = (key) => db.prepare('SELECT value FROM meta WHERE key = ?').get(key)?.value
+const hasUsers = !!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'users'").get()
+if (hasUsers && (meta('schema') !== SCHEMA_VERSION || (meta('contract') && meta('contract') !== config.contract.address))) {
+  throw new Error(
+    `The database ${config.databasePath} was made for ${meta('contract') ? `contract ${meta('contract')}` : 'an older version of FairPass'}, ` +
+      `not the current contract ${config.contract.address}. Start fresh: run "npm run demo" (without --keep), ` +
+      `or delete that .db file (and its -wal / -shm files) and restart.`,
+  )
+}
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS users (
@@ -15,46 +30,54 @@ CREATE TABLE IF NOT EXISTS users (
   phone         TEXT NOT NULL UNIQUE,
   name          TEXT,
   idHash        TEXT UNIQUE,                 -- HMAC-SHA256 of the ID number, never the raw ID
+  idType        TEXT,                        -- AADHAAR | PAN
+  idLast4       TEXT,                        -- last 4 characters only, for a masked display
   walletAddress TEXT NOT NULL,
   encKey        TEXT,                        -- custodial private key, AES-256-GCM encrypted (NULL for the organiser)
-  role          TEXT NOT NULL DEFAULT 'fan' CHECK (role IN ('fan','organiser','staff','company_admin')),
+  role          TEXT NOT NULL DEFAULT 'fan' CHECK (role IN ('fan','organiser','staff')),
   isVerified    INTEGER NOT NULL DEFAULT 0,
+  lastLoginAt   TEXT,
   createdAt     TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS events (
-  id             INTEGER PRIMARY KEY AUTOINCREMENT,
-  chainEventId   INTEGER NOT NULL,
-  name           TEXT NOT NULL,
-  artist         TEXT,
-  date           TEXT NOT NULL,              -- ISO date
-  venue          TEXT,
-  city           TEXT,
-  facePrice      TEXT NOT NULL,              -- QUAI, decimal string
-  supply         INTEGER NOT NULL,
-  lotteryTickets INTEGER NOT NULL,           -- tickets offered in this lottery round
-  resaleCapPct   INTEGER NOT NULL,
-  lotteryOpen    TEXT NOT NULL,
-  lotteryClose   TEXT NOT NULL,
-  seedHash       TEXT NOT NULL,              -- sha256(seed), public from the moment the lottery opens
-  seed           TEXT NOT NULL,              -- secret until the draw (commit-reveal)
-  drawnAt        TEXT,
-  createTx       TEXT
+  id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+  chainEventId       INTEGER NOT NULL,
+  name               TEXT NOT NULL,
+  artist             TEXT,
+  date               TEXT NOT NULL,          -- ISO date
+  venue              TEXT,
+  city               TEXT,
+  facePrice          TEXT NOT NULL,          -- QUAI, decimal string (what the contract uses)
+  facePriceInr       REAL,                   -- ₹ shown to fans (mock fiat; INR_PER_QUAI converts)
+  supply             INTEGER NOT NULL,
+  lotteryTickets     INTEGER NOT NULL,       -- tickets offered in this lottery round
+  resaleCapPct       INTEGER NOT NULL,       -- organiser-controlled, mirrors the contract
+  resaleCapTx        TEXT,                   -- tx of the last setResaleCap
+  resaleCapUpdatedAt TEXT,
+  lotteryOpen        TEXT NOT NULL,
+  lotteryClose       TEXT NOT NULL,
+  seedHash           TEXT NOT NULL,          -- sha256(seed), public from the moment the lottery opens
+  seed               TEXT NOT NULL,          -- secret until the draw (commit-reveal)
+  drawnAt            TEXT,
+  createTx           TEXT
 );
 
 CREATE TABLE IF NOT EXISTS entries (
-  id        INTEGER PRIMARY KEY AUTOINCREMENT,
-  userId    INTEGER NOT NULL REFERENCES users(id),
-  eventId   INTEGER NOT NULL REFERENCES events(id),
-  idHash    TEXT NOT NULL,
-  quantity  INTEGER NOT NULL DEFAULT 1 CHECK (quantity IN (1,2)),
-  powRef    TEXT,                            -- x402 Work job id / receipt reference
-  status    TEXT NOT NULL DEFAULT 'entered' CHECK (status IN ('entered','won','waitlist','lost')),
-  drawRank  INTEGER,
-  drawKey   TEXT,                            -- sha256(seed:entryId), the sort key of the draw
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId        INTEGER NOT NULL REFERENCES users(id),
+  eventId       INTEGER NOT NULL REFERENCES events(id),
+  idHash        TEXT NOT NULL,
+  quantity      INTEGER NOT NULL DEFAULT 1 CHECK (quantity >= 1),   -- tickets the fan asked for
+  ticketsWon    INTEGER NOT NULL DEFAULT 0,                         -- given by the draw or the waitlist
   ticketsMinted INTEGER NOT NULL DEFAULT 0,
-  createdAt TEXT NOT NULL DEFAULT (datetime('now')),
-  UNIQUE (eventId, idHash)
+  entryNumber   INTEGER,                     -- the fan's lottery number for this event
+  powRef        TEXT,                        -- x402 Work job id / receipt reference
+  status        TEXT NOT NULL DEFAULT 'entered' CHECK (status IN ('entered','won','partial','waitlist','lost')),
+  drawRank      INTEGER,
+  drawKey       TEXT,                        -- sha256(seed:entryId), the sort key of the draw
+  createdAt     TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (eventId, idHash)                   -- one entry per verified person per event
 );
 
 CREATE TABLE IF NOT EXISTS pow_challenges (
@@ -68,40 +91,17 @@ CREATE TABLE IF NOT EXISTS pow_challenges (
   UNIQUE (jobId, userId)
 );
 
-CREATE TABLE IF NOT EXISTS companies (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  name        TEXT NOT NULL,
-  gstin       TEXT NOT NULL UNIQUE,
-  adminUserId INTEGER NOT NULL REFERENCES users(id),
-  approved    INTEGER NOT NULL DEFAULT 0,
-  seatQuota   INTEGER NOT NULL DEFAULT 0,
-  eventId     INTEGER REFERENCES events(id),
-  createdAt   TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS corporate_seats (
-  id        INTEGER PRIMARY KEY AUTOINCREMENT,
-  companyId INTEGER NOT NULL REFERENCES companies(id),
-  eventId   INTEGER NOT NULL REFERENCES events(id),
-  phone     TEXT NOT NULL,                   -- invited employee
-  userId    INTEGER REFERENCES users(id),    -- set once the employee logs in
-  tokenId   INTEGER,
-  swapsLeft INTEGER NOT NULL DEFAULT 2,
-  verified  INTEGER NOT NULL DEFAULT 0,
-  note      TEXT,                            -- e.g. "minting", "ID already has a ticket for this event"
-  createdAt TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
 CREATE TABLE IF NOT EXISTS tickets (
-  tokenId     INTEGER PRIMARY KEY,
-  eventId     INTEGER NOT NULL REFERENCES events(id),
-  ownerUserId INTEGER REFERENCES users(id),  -- NULL while in the organiser's pool
-  seat        TEXT NOT NULL,                 -- "B-12-7" (block-row-seat)
-  status      TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','listed','used','returned')),
-  corporate   INTEGER NOT NULL DEFAULT 0,
-  listedPrice TEXT,
-  mintTx      TEXT,
-  createdAt   TEXT NOT NULL DEFAULT (datetime('now')),
+  tokenId        INTEGER PRIMARY KEY,
+  eventId        INTEGER NOT NULL REFERENCES events(id),
+  ownerUserId    INTEGER REFERENCES users(id),  -- NULL while in the organiser's pool
+  seat           TEXT NOT NULL,                 -- "B-12-7" (block-row-seat)
+  status         TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','listed','used','returned')),
+  listedPrice    TEXT,                          -- QUAI
+  listedPriceInr REAL,                          -- ₹
+  listingInvalid TEXT,                          -- set when the organiser lowers the cap below the listing
+  mintTx         TEXT,
+  createdAt      TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE (eventId, seat)
 );
 
@@ -127,7 +127,7 @@ CREATE TABLE IF NOT EXISTS blocked_attempts (
 CREATE TABLE IF NOT EXISTS activity (
   id      INTEGER PRIMARY KEY AUTOINCREMENT,
   eventId INTEGER,
-  kind    TEXT NOT NULL,                     -- minted | resold | returned | reassigned | listed | scanned ...
+  kind    TEXT NOT NULL,                     -- minted | resold | returned | reassigned | listed | scanned | resale_cap ...
   tokenId INTEGER,
   userId  INTEGER,
   txHash  TEXT,
@@ -136,21 +136,12 @@ CREATE TABLE IF NOT EXISTS activity (
 );
 `)
 
-// Columns added after the first release (ALTER keeps existing demo databases working).
-function addColumn(table, column, type) {
-  if (!db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column))
-    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`)
-}
-addColumn('users', 'idType', 'TEXT') // AADHAAR | PAN
-addColumn('users', 'idLast4', 'TEXT') // last 4 characters only, for a masked display
-addColumn('users', 'lastLoginAt', 'TEXT')
-addColumn('entries', 'entryNumber', 'INTEGER') // the fan's lottery number for this event
-
+db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema', ?)").run(SCHEMA_VERSION)
+db.prepare("INSERT OR IGNORE INTO meta (key, value) VALUES ('contract', ?)").run(config.contract.address)
 // A random id per database. Login tokens carry it, so a token issued by an older (reset) database
 // can't log in as whoever now has the same user id.
-db.exec('CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
 db.prepare("INSERT OR IGNORE INTO meta (key, value) VALUES ('instance', lower(hex(randomblob(16))))").run()
-export const instanceId = db.prepare("SELECT value FROM meta WHERE key = 'instance'").get().value
+export const instanceId = meta('instance')
 
 export function logBlocked({ reason, ip, eventId = null, userId = null, detail = null }) {
   db.prepare('INSERT INTO blocked_attempts (reason, ip, eventId, userId, detail) VALUES (?, ?, ?, ?, ?)').run(

@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "API: ID verification, lottery entries (x402 Work), waitlist, corporate booking, gate scanning",
+  "description": "API: ID verification, lottery entries (x402 Work), draw, resale cap, waitlist, gate scanning",
   "main": "src/index.js",
   "engines": {
     "node": ">=20"

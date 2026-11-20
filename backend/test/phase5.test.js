@@ -65,7 +65,7 @@ before(async () => {
   const r = await api(
     'POST',
     '/events',
-    { name: 'Lottery Test', date: '2027-02-01', supply: 20, facePrice: '0.01', chainEventId: 2, lotteryTickets: 2 },
+    { name: 'Lottery Test', date: '2027-02-01', supply: 20, facePriceInr: 4500, lotteryTickets: 2 }, // new on-chain event
     orgToken,
   )
   assert.equal(r.status, 201, JSON.stringify(r.body))
@@ -80,13 +80,15 @@ after(() => {
   quai.provider.destroy()
 })
 
-test('no account -> 401 NO_ID; unverified -> 403 NOT_VERIFIED; quantity 3 -> 400', async () => {
+test('no account -> 401 NO_ID; unverified -> 403 NOT_VERIFIED; quantity 0 or above the draw -> 400', async () => {
   assert.equal((await api('POST', `/events/${eventId}/enter`, { quantity: 1 })).body.reason, 'NO_ID')
   const u = await login('9811100099')
   const r = await api('POST', `/events/${eventId}/enter`, { quantity: 1 }, u.token)
   assert.equal(r.status, 403)
   assert.equal(r.body.reason, 'NOT_VERIFIED')
-  assert.equal((await api('POST', `/events/${eventId}/enter`, { quantity: 3 }, fans[1].token)).status, 400)
+  assert.equal((await api('POST', `/events/${eventId}/enter`, { quantity: 0 }, fans[1].token)).status, 400)
+  assert.equal((await api('POST', `/events/${eventId}/enter`, { quantity: 3 }, fans[1].token)).status, 400) // only 2 in this draw
+  assert.equal((await api('POST', `/events/${eventId}/enter`, { quantity: 1.5 }, fans[1].token)).status, 400)
 })
 
 test('without a proof the server answers 402 with an x402 Work puzzle', async () => {
@@ -197,9 +199,27 @@ test('commit-reveal draw: 2 winners minted on Orchard in parallel, 3 waitlisted,
   for (const t of tickets) assert.equal((await quai.ownerOf(t.tokenId)).toLowerCase(), t.walletAddress.toLowerCase())
 })
 
+test('draw partial fill: asks for 3+3+3 with 5 tickets -> 3 won, 2 partial (1 waiting), rest waitlisted', async () => {
+  const { runDraw } = await import('../src/services/draw.js')
+  const ev = db.prepare('SELECT * FROM events WHERE id = ?').get(eventId)
+  const id = db
+    .prepare(
+      `INSERT INTO events (chainEventId, name, date, facePrice, supply, lotteryTickets, resaleCapPct, lotteryOpen, lotteryClose, seedHash, seed)
+       VALUES (?, 'Partial Test', ?, ?, 20, 5, 10, ?, ?, ?, ?)`,
+    )
+    .run(ev.chainEventId, ev.date, ev.facePrice, ev.lotteryOpen, ev.lotteryClose, ev.seedHash, ev.seed).lastInsertRowid
+  for (const n of [1, 2, 3])
+    db.prepare("INSERT INTO entries (userId, eventId, idHash, quantity) VALUES (?, ?, ?, 3)").run(fans[n].user.id, id, `partial-${n}`)
+  const r = runDraw(db.prepare('SELECT * FROM events WHERE id = ?').get(id))
+  assert.deepEqual({ winners: r.winners, partial: r.partial, waitlist: r.waitlist, ticketsAllocated: r.ticketsAllocated }, { winners: 1, partial: 1, waitlist: 1, ticketsAllocated: 5 })
+  const rows = db.prepare('SELECT status, ticketsWon, quantity FROM entries WHERE eventId = ? ORDER BY drawRank').all(id)
+  assert.deepEqual(rows.map((e) => [e.status, e.ticketsWon]), [['won', 3], ['partial', 2], ['waitlist', 0]])
+})
+
 test('per-IP rate limit -> RATE_LIMITED; stats show every blocked reason', async () => {
   // A fresh open event, so the lottery is open again.
-  const r = await api('POST', '/events', { name: 'Rate Test', date: '2027-03-01', supply: 20, facePrice: '0.01', chainEventId: 2 }, fans.org)
+  const chainEventId = db.prepare('SELECT chainEventId FROM events WHERE id = ?').get(eventId).chainEventId
+  const r = await api('POST', '/events', { name: 'Rate Test', date: '2027-03-01', supply: 20, facePrice: '0.01', chainEventId }, fans.org)
   const id = r.body.event.id
   config.rateLimitPerMinute = 3
   try {
