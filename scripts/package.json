@@ -1,0 +1,11 @@
+{
+  "name": "@chainmakers/scripts",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Utility scripts: generate a Cyprus-1 wallet, seed demo data, simulate bots, etc.",
+  "dependencies": {
+    "dotenv": "^18.0.10",
+    "quais": "1.0.0-alpha.58"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "@chainmakers/backend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "API: ID verification, lottery entries (x402 Work), waitlist, corporate booking, gate scanning",
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.2.0",
+    "cors": "^2.8.6",
+    "dotenv": "^18.0.10",
+    "express": "^5.3.0",
+    "quais": "1.0.0-alpha.58"
+  }
+}
