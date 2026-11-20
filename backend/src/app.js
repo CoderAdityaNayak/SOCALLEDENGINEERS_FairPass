@@ -2,9 +2,9 @@
 import express from 'express'
 import cors from 'cors'
 import { config } from './config.js'
-import { HttpError } from './auth.js'
+import { HttpError, requireRole } from './auth.js'
 import { ChainError } from './services/quai.js'
-import { mirrorStatus } from './services/firestore.js'
+import { mirrorStatus, reconcile } from './services/firestore.js'
 import { router as authRouter } from './routes/auth.js'
 import { router as eventsRouter } from './routes/events.js'
 import { router as lotteryRouter } from './routes/lottery.js'
@@ -28,6 +28,13 @@ export function createApp() {
   app.get('/health', (_req, res) =>
     res.json({ ok: true, contract: config.contract.address, chainId: config.contract.chainId, firestore: mirrorStatus }),
   )
+  // Organiser: force a full Firestore resync (the mirror also heals itself every minute).
+  app.post('/admin/firestore/resync', requireRole('organiser'), async (_req, res) => {
+    if (!mirrorStatus.enabled) throw new HttpError(409, 'Firestore mirror is off (set FIREBASE_PROJECT_ID in backend/.env)')
+    const result = await reconcile('manual resync', { mode: 'full', wait: true })
+    if (!result) throw new HttpError(503, `Resync failed: ${mirrorStatus.lastError || 'unknown error'}`)
+    res.json({ ok: true, ...result })
+  })
   app.use('/auth', authRouter)
   app.use('/events', eventsRouter)
   app.use('/events', lotteryRouter)

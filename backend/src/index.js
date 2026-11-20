@@ -9,7 +9,7 @@ import { instanceId } from './db.js'
 const firestoreOn = await startFirestoreMirror()
 const org = ensureOrganiser()
 createApp().listen(config.port, () => {
-  if (firestoreOn) console.log(`  Firestore mirror on: project ${config.firebase.projectId}, path fairpass/${instanceId}`)
+  if (firestoreOn) console.log(`  Firestore mirror on: project ${config.firebase.projectId}, path fairpass/live (database ${instanceId.slice(0, 8)})`)
   console.log(`FairPass backend on http://localhost:${config.port}`)
   console.log(`  contract  ${explorerAddress(config.contract.address)}`)
   console.log(`  organiser ${organiser.address} (login phone ${org.phone})`)

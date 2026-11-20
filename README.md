@@ -80,7 +80,7 @@ flowchart LR
 |---|---|---|
 | **Quai Orchard** | Tickets, owners, listings, used flags, gate staff | `FairPass.sol` at the address above |
 | **SQLite** (source of truth) | Users, entries, draw, seats, companies, scans, blocked attempts | `backend/data/demo.db` (`npm run demo`) or `backend/data/fairpass.db` |
-| **Cloud Firestore** (optional mirror) | A copy of every SQLite row, updated within about a second | `fairpass/{databaseId}/{table}/{id}`; `fairpass/_current` points to the running database |
+| **Cloud Firestore** (optional mirror) | A copy of every SQLite row, updated within about a second | `fairpass/live/{table}/{id}` (always the current database; heals itself every minute) |
 
 The Firestore mirror turns on when `FIREBASE_PROJECT_ID` (and the rest of the web config) is set in `backend/.env`.
 Every insert, update and delete is copied by SQLite triggers. Documents also carry organiser-readable fields (fan

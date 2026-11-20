@@ -141,7 +141,11 @@ Each part has `.env.example`; copy to `.env` (git-ignored). Never commit private
 - JWTs carry the DB instance id (`meta` table), so tokens from a reset database are rejected.
 - **Firestore mirror** (`services/firestore.js`, firebase 13.4.0 `firestore/lite`, web config in `backend/.env`, project
   navya-e59a8 in test mode): SQLite stays the source of truth; TEMP triggers on every table call the JS function
-  `fs_sync`, a flusher batch-writes rows to `fairpass/{instanceId}/{table}/{pk}` every ~0.5 s. Excluded: `users.encKey`,
+  `fs_sync`, a flusher batch-writes rows to `fairpass/live/{table}/{pk}` every ~0.5 s. Self-healing `reconcile()`: at
+  startup (full rewrite if `fairpass/live.instanceId` differs) and every FIRESTORE_CHECK_SECONDS (60) it compares
+  document counts with SQLite, re-uploads deleted docs and removes leftovers; rows are re-read at write time and
+  deletions re-checked, so concurrent changes aren't clobbered. `POST /admin/firestore/resync` (organiser) forces it;
+  the organiser dashboard shows the status. Excluded: `users.encKey`,
   `events.seed` before the draw. `blocked_attempts` go to `blocked_summary/{eventId}` unless FIRESTORE_MIRROR_ALL_BLOCKED=1.
   If test-mode rules expire, writes fail with permission-denied (logged, retried); the app keeps working.
 - DEMO_MODE only: OTPs are returned in API responses, and `x-fairpass-demo-client` splits the rate-limit bucket so the bot

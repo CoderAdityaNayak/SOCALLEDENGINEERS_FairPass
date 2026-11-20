@@ -101,6 +101,79 @@ function DrawProof({ eventId, drawn }) {
   )
 }
 
+/** Firestore mirror + Quai status, with a manual resync. */
+function SyncStatus({ chainEventId, minted }) {
+  const [health, setHealth] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState(null)
+  const load = useCallback(() => api('/health').then(setHealth).catch(() => setHealth(null)), [])
+  useEffect(() => {
+    load()
+    const t = setInterval(load, 5000)
+    return () => clearInterval(t)
+  }, [load])
+  const f = health?.firestore
+  const ok = f?.enabled && !f.pending && f.ok !== false
+  async function resync() {
+    setBusy(true)
+    setMsg(null)
+    try {
+      const r = await api('/admin/firestore/resync', { method: 'POST' })
+      setMsg(`Resynced: ${r.uploaded} documents uploaded, ${r.removed} removed`)
+      load()
+    } catch (err) {
+      setMsg(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <Card className="grid gap-4 sm:grid-cols-2">
+      <div>
+        <p className="flex items-center gap-2 text-sm text-muted">
+          <span className={`size-2.5 rounded-full ${!f?.enabled ? 'bg-muted' : ok ? 'bg-lime' : 'bg-err-soft'}`} aria-hidden="true" />
+          Firestore copy
+        </p>
+        <p className="mt-1 font-semibold">
+          {!f
+            ? 'Checking…'
+            : !f.enabled
+              ? 'Off (no Firebase config)'
+              : f.ok === false
+                ? 'Not reaching Firebase (retrying)'
+                : f.pending
+                  ? `${f.pending} change(s) waiting`
+                  : 'In sync'}
+        </p>
+        {f?.enabled && (
+          <p className="mt-1 text-xs text-muted">
+            {f.path} · {num(f.written)} writes
+            {f.lastCheck ? ` · checked ${new Date(f.lastCheck).toLocaleTimeString('en-IN')}` : ''}
+            {f.lastError && f.failures ? ` · last problem: ${f.lastError}` : ''}
+          </p>
+        )}
+        {f?.enabled && (
+          <Button variant="secondary" className="mt-3 min-h-10 text-sm" loading={busy} onClick={resync}>
+            <I.Refresh size={16} /> Resync now
+          </Button>
+        )}
+        {msg && <p className="mt-2 text-xs text-muted" role="status">{msg}</p>}
+      </div>
+      <div>
+        <p className="flex items-center gap-2 text-sm text-muted">
+          <span className="size-2.5 rounded-full bg-lime" aria-hidden="true" /> Quai Orchard
+        </p>
+        <p className="mt-1 font-semibold">
+          Chain event #{chainEventId} · {num(minted)} ticket{minted === 1 ? '' : 's'} on-chain
+        </p>
+        <p className="mt-1 text-xs text-muted">
+          Entries stay off-chain until the draw. Tickets, resales, returns and check-ins are Quai transactions.
+        </p>
+      </div>
+    </Card>
+  )
+}
+
 function CorporateRequests({ event, onChange }) {
   const [companies, setCompanies] = useState([])
   const [quota, setQuota] = useState({})
@@ -297,6 +370,8 @@ export default function Organiser() {
           </div>
         </Card>
         <ErrorNote error={error} />
+
+        <SyncStatus chainEventId={ev.chainEventId} minted={stats.tickets.minted} />
 
         {stats.minting && (
           <Card className="flex items-center gap-3 p-4">
