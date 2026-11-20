@@ -59,9 +59,12 @@ in ₹ and converted to wei with floor division, then checked against the exact 
 
 ### Deployed (Orchard, Cyprus-1)
 
-- FairPass: `0x002cb29004b6A97790464e2411173C6204f1A869` — https://orchard.quaiscan.io/address/0x002cb29004b6A97790464e2411173C6204f1A869
+- FairPass v2 (resale cap, batch mint, no corporate): `0x0023c8DA6CB5Bf2122657db07B4df64edb386116` —
+  https://orchard.quaiscan.io/address/0x0023c8DA6CB5Bf2122657db07B4df64edb386116 (deploy tx
+  `0x00790010632bb2780095cebca41d26a6dd51b83a9fe50aaa12270a17825621b3`). The v1 contract
+  `0x002cb29004b6A97790464e2411173C6204f1A869` is retired; databases made for it are refused at startup.
 - Owner / organiser / gate staff (user's Pelagus wallet): `0x001EbFd19D321Ac69CB7E7E8C1268Ea19ab94b83`
-- Demo event id 1: "[Headliner] World Tour", 0.01 QUAI, 100 seats, cap 10%. Metadata CID `QmWK2fsTqXndrkecJHxSY353JdJmvaTMKNcb6a3VkMkV7Q`.
+- Demo event id 1: "[Headliner] World Tour", 0.01 QUAI (₹4,500), 100 seats, cap 10%. Metadata CID `QmVYKELiqFG5fZfEuDTpNdqmpzf2hG2TE9pTSJGa2DoQKi`.
 - `backend/src/contract.json` / `frontend/src/contract.json` hold `{address, abi, chainId, ...}` (committed; no secrets).
 - The backend must sign as the owner: `backend/.env` `ORGANISER_PK` = the same key as `contracts/.env` `PRIVATE_KEY`.
 - **Wallet**: Pelagus optional (`new quais.BrowserProvider(window.pelagus)`, connect with `send('quai_requestAccounts')`).
@@ -148,7 +151,7 @@ Each part has `.env.example`; copy to `.env` (git-ignored). Never commit private
 
 ## Commands
 
-- `npm install` (root) · `npm run compile` · `npm run test:contracts` (20) · `npm run test:backend` (21, real Orchard + facilitator, ~6 min) · `npm test -w frontend`
+- `npm install` (root) · `npm run compile` · `npm run test:contracts` (25) · `npm run test:backend` (22, real Orchard + facilitator, ~6 min) · `npm test -w frontend`
 - `npm run demo` · `npm run bot-attack` · `npm run e2e` (against a running API with DEMO_MODE=1)
 - `npm run deploy` (Orchard, needs `contracts/.env` PRIVATE_KEY) · `npm run dev:backend` · `npm run dev:frontend`
 
