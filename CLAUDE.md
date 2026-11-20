@@ -101,7 +101,7 @@ Goal: fans get tickets at a fair price, resale is possible but can't be exploite
    commit-reveal draw `POST /events/:id/draw`, `GET /events/:id/draw-proof`, `GET /events/:id/stats`; `scripts/bot-attack.js` (10,000 attempts).
 6. **Tickets/gate/resale/corporate** ✅: `/me/tickets`, `/tickets/:id/qr`, `/gate/verify` (EXPIRED / NOT_ON_CHAIN / NOT_OWNER /
    ALREADY_USED / VALID), list/buy/return, corporate apply/approve/seats/swap, `scripts/e2e.js`.
-7. **Frontend**: dark mobile-first design (bg #0B0D12, cards #151922, borders #262C38, text #F2F4F8, muted #9AA3B2, lime #C6F432 with
+7. **Frontend** ✅: dark mobile-first design (bg #0B0D12, cards #151922, borders #262C38, text #F2F4F8, muted #9AA3B2, lime #C6F432 with
    dark text, error #C62828/#FF8A8A; Space Grotesk 700 headings, Inter body; radius 14–22px; stroke SVG icons; no emoji).
    Pages: Login, Home/Event, Enter lottery, My ticket, Resale, Gate scanner, Organiser dashboard, Corporate booking; Pelagus connect; role nav.
 8. **Demo**: `npm run demo` (seeds organiser, staff, 5 fans, 1 company + 5 employees, open event; prints phones + OTPs), README.

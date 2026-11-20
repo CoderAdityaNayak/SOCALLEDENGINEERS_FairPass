@@ -1,6 +1,7 @@
 // Event listing and creation (organiser creates the event on-chain).
 import crypto from 'node:crypto'
 import { Router } from 'express'
+import { config } from '../config.js'
 import { db, logActivity } from '../db.js'
 import { HttpError, loadUser, requireRole } from '../auth.js'
 import * as quai from '../services/quai.js'
@@ -50,6 +51,7 @@ export function publicEvent(e) {
     corporateCap: corporateCap(e),
     resaleCapPct: e.resaleCapPct,
     maxPerId: 2,
+    antiBot: { scheme: 'x402 Work', profile: 'quai/sha256d-v1', guesses: config.x402Amount },
     lotteryOpen: e.lotteryOpen,
     lotteryClose: e.lotteryClose,
     lotteryStatus: status,
