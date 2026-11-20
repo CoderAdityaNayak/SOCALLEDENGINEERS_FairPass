@@ -26,7 +26,7 @@ Goal: fans get tickets at a fair price, resale is possible but cannot be exploit
 
 | Folder | What | Tech |
 |---|---|---|
-| `/contracts` | Solidity contracts + deploy scripts + tests | Hardhat **2** (2.29.2), toolbox 6.1.2 (the hh2 line), `@quai/hardhat-deploy-metadata`, OpenZeppelin 5 |
+| `/contracts` | Solidity contracts + deploy scripts + tests | Hardhat **2** (2.29.2), toolbox 6.1.2 (the hh2 line), `@quai/hardhat-deploy-metadata`, OpenZeppelin **5.4.0** (pinned) |
 | `/backend` | API: ID verification, lottery entry (x402 Work), waitlist, corporate booking, gate scanning | Node 20+, Express 5, SQLite via `better-sqlite3`, ESM |
 | `/frontend` | Fan app, resale, gate QR, scanner page | React 19 + Vite + Tailwind v4 (`@tailwindcss/vite`, no tailwind.config) |
 | `/scripts` | Utilities: wallet generation, seeding, bot simulation | Node ESM + `quais` |
@@ -37,6 +37,8 @@ Root `package.json` uses npm workspaces (`npm install` at the root installs ever
 
 - **Solidity 0.8.20** with `evmVersion: 'london'`, optimizer on, and `metadata: { bytecodeHash: 'ipfs', useLiteralContent: true }`
   (needed for IPFS metadata and Quaiscan verification). Do not use newer Solidity or opcodes after London.
+- **Keep OpenZeppelin at 5.4.0.** 5.5+ requires `pragma ^0.8.24` and will not compile with 0.8.20.
+  Verified: ERC721, Ownable, ECDSA, ReentrancyGuard from 5.4.0 compile on 0.8.20 / london.
 - **Use the `quais` SDK, not `ethers`** (pinned `1.0.0-alpha.58`), everywhere: scripts, backend, frontend. Hardhat's
   toolbox pulls in ethers internally; don't use it in our code.
 - **Addresses must be Cyprus-1**: Cyprus-1 is region 0, zone 0, so Quai-ledger addresses start with `0x00` and the
@@ -100,4 +102,5 @@ Each part has its own `.env.example`; copy to `.env` (git-ignored). Never commit
 
 ## Status
 
-Scaffold only. No features built yet.
+Scaffold only. No features built yet. Verified: `npm install` works, contracts compile, backend `/health`
+responds, frontend builds.
