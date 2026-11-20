@@ -74,6 +74,20 @@ flowchart LR
 | Gate check-in (`markUsed`, `used`) and gate staff list | Custodial wallet keys (encrypted), gas sponsoring, mock fiat refunds |
 | Corporate flag (corporate tickets can't be listed) | Gate pass signing (QR) and scan log |
 
+### Where the data lives
+
+| Store | What | Where |
+|---|---|---|
+| **Quai Orchard** | Tickets, owners, listings, used flags, gate staff | `FairPass.sol` at the address above |
+| **SQLite** (source of truth) | Users, entries, draw, seats, companies, scans, blocked attempts | `backend/data/demo.db` (`npm run demo`) or `backend/data/fairpass.db` |
+| **Cloud Firestore** (optional mirror) | A copy of every SQLite row, updated within about a second | `fairpass/{databaseId}/{table}/{id}`; `fairpass/_current` points to the running database |
+
+The Firestore mirror turns on when `FIREBASE_PROJECT_ID` (and the rest of the web config) is set in `backend/.env`.
+Every insert, update and delete is copied by SQLite triggers. Left out on purpose: custodial wallet keys, and the draw
+seed until the draw has happened. Blocked bot attempts are stored as one summary per event (counts by reason + the
+latest 50) so a 10,000-request bot attack doesn't use up the free plan's 20,000 writes a day; set
+`FIRESTORE_MIRROR_ALL_BLOCKED=1` to store every attempt. `GET /health` shows the mirror's status.
+
 ## Run it
 
 **Requirements:** Node 20+ (tested on 24), Git. Windows, macOS or Linux.

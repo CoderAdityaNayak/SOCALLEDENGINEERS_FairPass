@@ -4,6 +4,7 @@ import cors from 'cors'
 import { config } from './config.js'
 import { HttpError } from './auth.js'
 import { ChainError } from './services/quai.js'
+import { mirrorStatus } from './services/firestore.js'
 import { router as authRouter } from './routes/auth.js'
 import { router as eventsRouter } from './routes/events.js'
 import { router as lotteryRouter } from './routes/lottery.js'
@@ -24,7 +25,9 @@ export function createApp() {
     }),
   )
 
-  app.get('/health', (_req, res) => res.json({ ok: true, contract: config.contract.address, chainId: config.contract.chainId }))
+  app.get('/health', (_req, res) =>
+    res.json({ ok: true, contract: config.contract.address, chainId: config.contract.chainId, firestore: mirrorStatus }),
+  )
   app.use('/auth', authRouter)
   app.use('/events', eventsRouter)
   app.use('/events', lotteryRouter)

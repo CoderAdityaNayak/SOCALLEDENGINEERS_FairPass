@@ -44,6 +44,17 @@ export const config = {
   gasTopUpQuai: process.env.GAS_TOPUP_QUAI || '0.005',
   gasMinQuai: process.env.GAS_MIN_QUAI || '0.002',
 
+  // Optional Firestore mirror (services/firestore.js). Empty FIREBASE_PROJECT_ID = disabled.
+  firebase: {
+    apiKey: process.env.FIREBASE_API_KEY,
+    authDomain: process.env.FIREBASE_AUTH_DOMAIN,
+    projectId: process.env.FIREBASE_PROJECT_ID,
+    storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
+    messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID,
+    appId: process.env.FIREBASE_APP_ID,
+  },
+  firestoreMirrorAllBlocked: process.env.FIRESTORE_MIRROR_ALL_BLOCKED === '1',
+
   demoMode: process.env.DEMO_MODE === '1',
   demoOtp: process.env.DEMO_FIXED_OTP || '', // e.g. 123456 so demo logins are easy
   organiserPhone: process.env.ORGANISER_PHONE || '+919000000001',
