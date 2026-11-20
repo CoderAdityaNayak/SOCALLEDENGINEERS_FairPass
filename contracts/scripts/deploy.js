@@ -29,6 +29,50 @@ function writeOutputs(info) {
   }
 }
 
+// quais requires the IPFS CID of the contract metadata (it is embedded in the bytecode).
+// We compute it locally instead of relying on @quai/hardhat-deploy-metadata, whose IPFS client is
+// incompatible with the IPFS server at ipfs.qu.ai (kubo 0.17) and silently returns "" on failure.
+const IPFS_API = 'https://ipfs.qu.ai/api/v0'
+let metadataJson
+
+async function metadataCid(artifact) {
+  const Hash = require('ipfs-only-hash')
+  const bs58 = require('bs58').default || require('bs58')
+  const fqn = `${artifact.sourceName}:${artifact.contractName}`
+  const buildInfo = await hre.artifacts.getBuildInfo(fqn)
+  metadataJson = buildInfo.output.contracts[artifact.sourceName][artifact.contractName].metadata
+  const cid = await Hash.of(metadataJson) // CIDv0 "Qm..." (46 chars), same as solc's bytecodeHash: 'ipfs'
+  const multihashHex = Buffer.from(bs58.decode(cid)).toString('hex')
+  if (!artifact.deployedBytecode.toLowerCase().includes(multihashHex)) {
+    throw new Error(`Metadata CID ${cid} is not embedded in the bytecode. Recompile and try again.`)
+  }
+  return cid
+}
+
+async function uploadMetadata(expectedCid) {
+  try {
+    const form = new FormData()
+    form.append('file', new Blob([metadataJson]), 'metadata.json')
+    // Adding with pin=true makes ipfs.qu.ai time out (504); add first, then pin separately (best effort).
+    const res = await fetch(`${IPFS_API}/add?pin=false&cid-version=0`, {
+      method: 'POST',
+      body: form,
+      signal: AbortSignal.timeout(60_000),
+    })
+    if (!res.ok) throw new Error(`IPFS returned HTTP ${res.status}`)
+    const { Hash: uploaded } = await res.json()
+    if (uploaded !== expectedCid) throw new Error(`uploaded CID ${uploaded} != bytecode CID ${expectedCid}`)
+    console.log('    uploaded to ipfs.qu.ai')
+    const pin = await fetch(`${IPFS_API}/pin/add?arg=${uploaded}`, {
+      method: 'POST',
+      signal: AbortSignal.timeout(30_000),
+    }).catch(() => null)
+    console.log(pin?.ok ? '    pinned' : '    (pin request did not finish; the file is uploaded but may not be pinned)')
+  } catch (err) {
+    console.warn('    WARNING: metadata upload failed, deploying anyway (source won\'t show on Quaiscan):', err.message)
+  }
+}
+
 async function deployQuai(artifact) {
   const quais = require('quais')
   const { url, accounts } = hre.network.config
@@ -45,13 +89,9 @@ async function deployQuai(artifact) {
   if (balance === 0n) throw new Error('Deployer has 0 QUAI. Get Orchard QUAI at https://orchard.faucet.quai.network')
 
   console.log('1/4 Uploading contract metadata to IPFS (for Quaiscan verification)...')
-  let ipfsHash
-  try {
-    ipfsHash = await hre.deployMetadata.pushMetadataToIPFS('FairPass')
-    console.log('    IPFS CID', ipfsHash)
-  } catch (err) {
-    console.warn('    IPFS upload failed, deploying without it (Quaiscan verification will not work):', err.message)
-  }
+  const ipfsHash = await metadataCid(artifact)
+  console.log('    IPFS CID', ipfsHash)
+  await uploadMetadata(ipfsHash)
 
   console.log('2/4 Deploying FairPass...')
   const factory = new quais.ContractFactory(artifact.abi, artifact.bytecode, wallet, ipfsHash)

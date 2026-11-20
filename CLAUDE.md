@@ -43,9 +43,19 @@ Goal: fans get tickets at a fair price, resale is possible but can't be exploite
   `provider.getBlockNumber(quais.Shard.Cyprus1)` (no argument = Prime chain). Address-based calls route automatically.
 - quais facts: `new quais.JsonRpcProvider(RPC, undefined, { usePathing: true })`; `wallet.signMessage(msg)`;
   `quais.verifyMessage(msg, sig)` returns the address; `quais.parseQuai` / `formatQuai`.
-- **Deploy**: `const ipfsHash = await hre.deployMetadata.pushMetadataToIPFS('FairPass')`, then
-  `new quais.ContractFactory(abi, bytecode, wallet, ipfsHash)` → `deploy(...)` → `waitForDeployment()` → `getAddress()`.
-  Hardhat console doesn't work with Quai; use scripts.
+- **Deploy**: `new quais.ContractFactory(abi, bytecode, wallet, ipfsHash)` → `deploy(...)` → `waitForDeployment()` →
+  `getAddress()`. quais REQUIRES a 46-char IPFS CID. `@quai/hardhat-deploy-metadata`'s upload fails against ipfs.qu.ai
+  (kubo 0.17) and silently returns "", so `deploy.js` computes the CID locally (`ipfs-only-hash` of the solc metadata,
+  checked against the bytecode) and uploads with plain `fetch` (`add?pin=false`; `pin=true` → 504). Hardhat console
+  doesn't work with Quai; use scripts.
+
+### Deployed (Orchard, Cyprus-1)
+
+- FairPass: `0x002cb29004b6A97790464e2411173C6204f1A869` — https://orchard.quaiscan.io/address/0x002cb29004b6A97790464e2411173C6204f1A869
+- Owner / organiser / gate staff (user's Pelagus wallet): `0x001EbFd19D321Ac69CB7E7E8C1268Ea19ab94b83`
+- Demo event id 1: "[Headliner] World Tour", 0.01 QUAI, 100 seats, cap 10%. Metadata CID `QmWK2fsTqXndrkecJHxSY353JdJmvaTMKNcb6a3VkMkV7Q`.
+- `backend/src/contract.json` / `frontend/src/contract.json` hold `{address, abi, chainId, ...}` (committed; no secrets).
+- The backend must sign as the owner: `backend/.env` `ORGANISER_PK` = the same key as `contracts/.env` `PRIVATE_KEY`.
 - **Wallet**: Pelagus optional (`new quais.BrowserProvider(window.pelagus)`, connect with `send('quai_requestAccounts')`).
   Fans without a wallet get a custodial Cyprus-1 wallet created by the backend (private key encrypted with a server secret).
   The organiser wallet sponsors gas/payment for custodial wallets (mocked fiat).
@@ -71,13 +81,13 @@ Goal: fans get tickets at a fair price, resale is possible but can't be exploite
 ## Phases
 
 1. **Setup**: monorepo, .gitignore, .env.example per part, this file, git. ✅
-2. **Contract** `contracts/contracts/FairPass.sol`: `struct Event {name, date, facePrice, maxSupply, minted, resaleCapPct, organiser}`;
+2. **Contract** ✅ `contracts/contracts/FairPass.sol`: `struct Event {name, date, facePrice, maxSupply, minted, resaleCapPct, organiser}`;
    mappings events, ticketEvent, used, listedPrice, gateStaff, isCorporate; `createEvent` / `mintTicket(to,eventId,corporate)` onlyOwner;
    `listForResale` (owner, not corporate, not used, ≤ cap); `cancelListing`; `buyResale` payable (exact price, seller paid,
    2% royalty to organiser); `returnToPool` (to contract owner); `reassign` onlyOwner; `markUsed` onlyGateStaff;
    `isValid`; `addGateStaff`. `_update` override: tokens move ONLY via mint/buyResale/returnToPool/reassign.
    Events TicketMinted/Listed/Resold/Returned/Reassigned/Used. Hardhat tests for every rule.
-3. **Deploy**: `contracts/scripts/deploy.js` deploys, creates "[Headliner] World Tour" (0.01 QUAI, 100 supply, cap 10),
+3. **Deploy** ✅: `contracts/scripts/deploy.js` deploys, creates "[Headliner] World Tour" (0.01 QUAI, 100 supply, cap 10),
    adds deployer as gate staff, writes `{address, abi, chainId}` to `backend/src/contract.json` and `frontend/src/contract.json`.
    User runs it with their funded Pelagus Cyprus-1 key. Fallback: local Hardhat network.
 4. **Backend core**: SQLite tables users, events, entries, companies, corporate_seats, tickets, scans, blocked_attempts;
