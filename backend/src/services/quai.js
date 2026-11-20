@@ -91,24 +91,45 @@ export class ChainError extends Error {
   }
 }
 
-/** Sends a contract call from `wallet`, waits for it to be mined, returns { hash, receipt, events }. */
-async function send(wallet, action, fn) {
+// Orchard blocks take 10-50 s to confirm a transaction. Instead of waiting for each one, we hand out
+// nonces ourselves: broadcasts are serialized per signer (fast), confirmations are awaited in parallel.
+const nonces = new Map()
+
+/** Broadcasts `sendFn(nonce)` with the signer's next nonce. Returns the sent transaction. */
+function broadcast(wallet, sendFn) {
+  const key = wallet.address.toLowerCase()
   return enqueue(wallet.address, async () => {
+    let nonce = nonces.get(key)
+    if (nonce === undefined) nonce = await provider.getTransactionCount(wallet.address, 'pending')
     try {
-      const tx = await fn(contract.connect(wallet))
-      const receipt = await tx.wait()
-      const events = []
-      for (const log of receipt.logs || []) {
-        try {
-          const parsed = iface.parseLog(log)
-          if (parsed) events.push(parsed)
-        } catch {}
-      }
-      return { hash: tx.hash, receipt, events }
+      const tx = await sendFn(nonce)
+      nonces.set(key, nonce + 1)
+      return tx
     } catch (err) {
-      throw new ChainError(err, action)
+      nonces.delete(key) // resync from the node next time
+      throw err
     }
   })
+}
+
+/** Sends a contract call from `wallet`, waits for it to be mined, returns { hash, receipt, events }. */
+async function send(wallet, action, method, args, overrides = {}) {
+  let tx
+  try {
+    const c = contract.connect(wallet)
+    tx = await broadcast(wallet, (nonce) => c[method](...args, { ...overrides, nonce }))
+    const receipt = await tx.wait()
+    const events = []
+    for (const log of receipt.logs || []) {
+      try {
+        const parsed = iface.parseLog(log)
+        if (parsed) events.push(parsed)
+      } catch {}
+    }
+    return { hash: tx.hash, receipt, events }
+  } catch (err) {
+    throw new ChainError(err, action)
+  }
 }
 
 // ------------------------------------------------------------------ gas sponsoring (mocked fiat)
@@ -119,11 +140,11 @@ export async function sponsor(address, extraWei = 0n) {
   const min = quais.parseQuai(config.gasMinQuai) + extraWei
   if (balance >= min) return null
   const value = quais.parseQuai(config.gasTopUpQuai) + extraWei
-  return enqueue(organiser.address, async () => {
-    const tx = await organiser.sendTransaction({ from: organiser.address, to: address, value })
-    await tx.wait()
-    return tx.hash
-  })
+  const tx = await broadcast(organiser, (nonce) =>
+    organiser.sendTransaction({ from: organiser.address, to: address, value, nonce }),
+  )
+  await tx.wait()
+  return tx.hash
 }
 
 // ------------------------------------------------------------------ reads
@@ -147,51 +168,49 @@ export const chainEvent = (eventId) => contract.events(eventId)
 // ------------------------------------------------------------------ organiser writes
 
 export async function createEvent({ name, date, facePrice, maxSupply, resaleCapPct }) {
-  const r = await send(organiser, 'createEvent', (c) =>
-    c.createEvent(name, Math.floor(new Date(date).getTime() / 1000), quais.parseQuai(String(facePrice)), maxSupply, resaleCapPct),
-  )
+  const r = await send(organiser, 'createEvent', 'createEvent', [name, Math.floor(new Date(date).getTime() / 1000), quais.parseQuai(String(facePrice)), maxSupply, resaleCapPct])
   const ev = r.events.find((e) => e.name === 'EventCreated')
   return { chainEventId: Number(ev.args.eventId), hash: r.hash }
 }
 
 export async function mintTicket(to, chainEventId, corporate = false) {
-  const r = await send(organiser, 'mintTicket', (c) => c.mintTicket(to, chainEventId, corporate))
+  const r = await send(organiser, 'mintTicket', 'mintTicket', [to, chainEventId, corporate])
   const ev = r.events.find((e) => e.name === 'TicketMinted')
   return { tokenId: Number(ev.args.tokenId), hash: r.hash }
 }
 
 export async function markUsed(tokenId) {
-  return send(organiser, 'markUsed', (c) => c.markUsed(tokenId))
+  return send(organiser, 'markUsed', 'markUsed', [tokenId])
 }
 
 export async function reassign(tokenId, to) {
-  return send(organiser, 'reassign', (c) => c.reassign(tokenId, to))
+  return send(organiser, 'reassign', 'reassign', [tokenId, to])
 }
 
 export async function addGateStaff(address) {
-  return send(organiser, 'addGateStaff', (c) => c.addGateStaff(address))
+  return send(organiser, 'addGateStaff', 'addGateStaff', [address])
 }
 
 // ------------------------------------------------------------------ ticket-holder writes (custodial)
 
 export async function listForResale(wallet, tokenId, priceWei) {
   await sponsor(wallet.address)
-  return send(wallet, 'listForResale', (c) => c.listForResale(tokenId, priceWei))
+  return send(wallet, 'listForResale', 'listForResale', [tokenId, priceWei])
 }
 
 export async function cancelListing(wallet, tokenId) {
   await sponsor(wallet.address)
-  return send(wallet, 'cancelListing', (c) => c.cancelListing(tokenId))
+  return send(wallet, 'cancelListing', 'cancelListing', [tokenId])
 }
 
 export async function buyResale(wallet, tokenId, priceWei) {
   await sponsor(wallet.address, priceWei) // mock: the fan "pays" fiat, the organiser funds the wallet
-  return send(wallet, 'buyResale', (c) => c.buyResale(tokenId, { value: priceWei }))
+  return send(wallet, 'buyResale', 'buyResale', [tokenId], { value: priceWei })
 }
 
 export async function returnToPool(wallet, tokenId) {
   await sponsor(wallet.address)
-  return send(wallet, 'returnToPool', (c) => c.returnToPool(tokenId))
+  return send(wallet, 'returnToPool', 'returnToPool', [tokenId])
 }
 
 export { quais }

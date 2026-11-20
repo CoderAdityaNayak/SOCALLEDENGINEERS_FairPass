@@ -6,6 +6,7 @@
   "description": "Utility scripts: generate a Cyprus-1 wallet, seed demo data, simulate bots, etc.",
   "dependencies": {
     "dotenv": "^18.0.10",
-    "quais": "1.0.0-alpha.58"
+    "quais": "1.0.0-alpha.58",
+    "x402-work-client": "https://x402.qu.ai/x402-work-client-0.4.1.tgz"
   }
 }

@@ -76,6 +76,10 @@ Goal: fans get tickets at a fair price, resale is possible but can't be exploite
 - Server pre-verifies every proof locally (package exports `workHeader`, `workDigest`, `workScore`, `workTarget`)
   and binds job ids to the user that requested them, so garbage proofs never reach the facilitator.
   Cheap checks (auth, KYC, duplicate ID, rate limit) run BEFORE a challenge is requested.
+- **The facilitator gives the SAME job to everyone who asks within a few seconds** (fans compete with different
+  solutions; each solution settles once). So issued puzzles are keyed by `jobId:userId`, never by jobId alone.
+- Fallback `X402_MODE=local` (or automatic when the facilitator is down): FairPass issues identical-shape SHA-256d jobs on
+  network `quai:15000` and verifies them itself.
 - Jobs expire in ~15 s; a proof is spent once. CORS: allow `payment-signature`, expose `payment-required`, `payment-response`.
 
 ## Phases
@@ -90,10 +94,10 @@ Goal: fans get tickets at a fair price, resale is possible but can't be exploite
 3. **Deploy** ✅: `contracts/scripts/deploy.js` deploys, creates "[Headliner] World Tour" (0.01 QUAI, 100 supply, cap 10),
    adds deployer as gate staff, writes `{address, abi, chainId}` to `backend/src/contract.json` and `frontend/src/contract.json`.
    User runs it with their funded Pelagus Cyprus-1 key. Fallback: local Hardhat network.
-4. **Backend core**: SQLite tables users, events, entries, companies, corporate_seats, tickets, scans, blocked_attempts;
+4. **Backend core** ✅: SQLite tables users, events, entries, companies, corporate_seats, tickets, scans, blocked_attempts;
    `src/services/quai.js`; mock OTP auth (OTP printed to console) + JWT + custodial wallet; KYC (ID → SHA-256 hash, duplicate → 409
    + blocked_attempts); events CRUD (organiser → createEvent on-chain); role middleware; random block/row/seat at mint.
-5. **Lottery + anti-bot**: `POST /events/:id/enter` (x402 Work + verified + one per idHash + IP rate limit; every rejection logged);
+5. **Lottery + anti-bot** ✅: `POST /events/:id/enter` (x402 Work + verified + one per idHash + IP rate limit; every rejection logged);
    commit-reveal draw `POST /events/:id/draw`, `GET /events/:id/draw-proof`, `GET /events/:id/stats`; `scripts/bot-attack.js` (10,000 attempts).
 6. **Tickets/gate/resale/corporate**: `/me/tickets`, `/tickets/:id/qr`, `/gate/verify` (EXPIRED / NOT_ON_CHAIN / NOT_OWNER /
    ALREADY_USED / VALID), list/buy/return, corporate apply/approve/seats/swap, `scripts/e2e.js`.

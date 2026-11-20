@@ -14,6 +14,8 @@
     "dev:backend": "npm run dev -w backend",
     "dev:frontend": "npm run dev -w frontend",
     "deploy": "npm run deploy -w contracts",
-    "deploy:local": "npm run deploy:local -w contracts"
+    "deploy:local": "npm run deploy:local -w contracts",
+    "bot-attack": "node scripts/bot-attack.js",
+    "test:backend": "npm test -w backend"
   }
 }

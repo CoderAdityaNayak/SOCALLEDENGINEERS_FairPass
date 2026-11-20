@@ -6,6 +6,7 @@ import { HttpError } from './auth.js'
 import { ChainError } from './services/quai.js'
 import { router as authRouter } from './routes/auth.js'
 import { router as eventsRouter } from './routes/events.js'
+import { router as lotteryRouter } from './routes/lottery.js'
 
 export function createApp() {
   const app = express()
@@ -23,6 +24,7 @@ export function createApp() {
   app.get('/health', (_req, res) => res.json({ ok: true, contract: config.contract.address, chainId: config.contract.chainId }))
   app.use('/auth', authRouter)
   app.use('/events', eventsRouter)
+  app.use('/events', lotteryRouter)
 
   app.use((_req, _res, next) => next(new HttpError(404, 'Not found')))
   // eslint-disable-next-line no-unused-vars

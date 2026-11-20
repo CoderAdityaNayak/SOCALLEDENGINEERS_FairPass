@@ -51,8 +51,21 @@ CREATE TABLE IF NOT EXISTS entries (
   powRef    TEXT,                            -- x402 Work job id / receipt reference
   status    TEXT NOT NULL DEFAULT 'entered' CHECK (status IN ('entered','won','waitlist','lost')),
   drawRank  INTEGER,
+  drawKey   TEXT,                            -- sha256(seed:entryId), the sort key of the draw
+  ticketsMinted INTEGER NOT NULL DEFAULT 0,
   createdAt TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE (eventId, idHash)
+);
+
+CREATE TABLE IF NOT EXISTS pow_challenges (
+  id       INTEGER PRIMARY KEY AUTOINCREMENT,
+  jobId    TEXT NOT NULL,                    -- x402 Work job id (the facilitator shares one job between
+  userId   INTEGER,                          --   everyone asking in the same few seconds)
+  eventId  INTEGER,
+  mode     TEXT NOT NULL,                    -- facilitator | local
+  solved   INTEGER NOT NULL DEFAULT 0,
+  issuedAt INTEGER NOT NULL,                 -- unix ms
+  UNIQUE (jobId, userId)
 );
 
 CREATE TABLE IF NOT EXISTS companies (
