@@ -5,11 +5,13 @@ import { config } from './config.js'
 import { HttpError, requireRole } from './auth.js'
 import { ChainError } from './services/quai.js'
 import { mirrorStatus, reconcile } from './services/firestore.js'
+import { listenerStatus } from './services/chainEvents.js'
 import { router as authRouter } from './routes/auth.js'
 import { router as eventsRouter } from './routes/events.js'
 import { router as lotteryRouter } from './routes/lottery.js'
 import { router as ticketsRouter } from './routes/tickets.js'
 import { router as gateRouter } from './routes/gate.js'
+import { router as marketRouter } from './routes/market.js'
 
 export function createApp() {
   const app = express()
@@ -25,7 +27,7 @@ export function createApp() {
   )
 
   app.get('/health', (_req, res) =>
-    res.json({ ok: true, contract: config.contract.address, chainId: config.contract.chainId, firestore: mirrorStatus }),
+    res.json({ ok: true, contract: config.contract.address, chainId: config.contract.chainId, firestore: mirrorStatus, chainListener: listenerStatus }),
   )
   // Organiser: force a full Firestore resync (the mirror also heals itself every minute).
   app.post('/admin/firestore/resync', requireRole('organiser'), async (_req, res) => {
@@ -38,6 +40,7 @@ export function createApp() {
   app.use('/events', eventsRouter)
   app.use('/events', lotteryRouter)
   app.use(ticketsRouter)
+  app.use(marketRouter)
   app.use(gateRouter)
 
   app.use((_req, _res, next) => next(new HttpError(404, 'Not found')))

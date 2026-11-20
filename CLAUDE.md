@@ -30,6 +30,27 @@ Goal: fans get tickets at a fair price, resale is possible but can't be exploite
 3. **Real tickets**: only contract-minted tokens are valid. Fan QR = `{tokenId, timestamp, signature}`, refreshed every 30 s.
    Gate checks: fresh (< 30 s), signer == `ownerOf(tokenId)` on-chain, not used → then `markUsed` on-chain.
 4. ~~Corporate booking~~ was **removed** (contract, backend, Firestore, frontend, demo). Don't reintroduce it.
+5. **Pass your ticket on**: a ticket owner gets 4 options (My Ticket → "Pass it on" sheet):
+   1. **Return to pool** (RECOMMENDED): face-price refund (mock), ticket goes to the next waitlisted fan.
+   2. **Gift to a friend**: free, to one registered + verified user.
+   3. **Sell privately**: to one person (phone → their wallet = `allowedBuyer`), via a share link `/buy/:listingId`.
+   4. **Sell publicly**: listed on the event's marketplace (event page → Resale tab).
+
+   Fairness rules (enforced on-chain where marked ⛓, else by the backend):
+   - ⛓ Resale price ≤ face × (100 + event's `resaleCapPct`) / 100 for public AND private sales, re-checked at purchase.
+   - ⛓ A gift is free and each ticket can be gifted only ONCE (`gifted[tokenId]`). Recipient must be registered + verified.
+     Each user can gift at most 2 tickets per event.
+   - Buyers must be verified and solve an x402 Work puzzle (same as lottery entry) before buying.
+   - Public listings: for the first 10 minutes only waitlisted fans of that event (entry status `waitlist`/`partial`)
+     can buy; others see "Waitlist priority — open to all in m:ss". Then everyone.
+   - ⛓ Transfers lock 24 h before the event date: no gifts, listings or purchases (`TransfersLocked`). Returning to the
+     pool and cancelling a listing still work.
+   - ⛓ Tickets move ONLY via mint, buyResale, giftTicket, returnToPool, reassign. The gate checks the QR signer against
+     `ownerOf`, so the old owner's QR stops working the moment a transfer confirms.
+   - ⛓ A listed ticket can't be checked in at the gate until the listing is cancelled (gate result `LISTED`).
+   - ⛓ You can't buy from or gift to yourself (and can't make a private listing for yourself).
+   - Buyers pay from their own custodial wallet (the demo seed funds each fan with test QUAI); the organiser only tops
+     up gas. Not enough balance → clear error.
 
 **Prices in ₹**: on-chain prices are QUAI (wei). Each event also stores `facePriceInr`; the UI shows ₹ using a fixed
 mock rate `INR_PER_QUAI` (default 450000, so 0.01 QUAI = ₹4,500). Payments are mocked fiat. Listing prices are entered

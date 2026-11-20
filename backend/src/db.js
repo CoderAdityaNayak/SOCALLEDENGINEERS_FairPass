@@ -4,7 +4,7 @@ import path from 'node:path'
 import Database from 'better-sqlite3'
 import { config } from './config.js'
 
-const SCHEMA_VERSION = '2' // v2: no corporate tables, any ticket quantity, partial wins, organiser resale cap
+const SCHEMA_VERSION = '3' // v3: listings (public/private), gifts, ticket history
 
 fs.mkdirSync(path.dirname(config.databasePath), { recursive: true })
 export const db = new Database(config.databasePath)
@@ -100,9 +100,47 @@ CREATE TABLE IF NOT EXISTS tickets (
   listedPrice    TEXT,                          -- QUAI
   listedPriceInr REAL,                          -- ₹
   listingInvalid TEXT,                          -- set when the organiser lowers the cap below the listing
+  listingId      INTEGER,                       -- the active listing, if any
+  gifted         INTEGER NOT NULL DEFAULT 0,    -- gifted once already (can't be gifted again)
+  acquiredVia    TEXT NOT NULL DEFAULT 'lottery' CHECK (acquiredVia IN ('lottery','waitlist','gift','purchase')),
+  acquiredFromUserId INTEGER REFERENCES users(id),
   mintTx         TEXT,
   createdAt      TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE (eventId, seat)
+);
+
+CREATE TABLE IF NOT EXISTS listings (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  tokenId      INTEGER NOT NULL REFERENCES tickets(tokenId),
+  eventId      INTEGER NOT NULL REFERENCES events(id),
+  sellerUserId INTEGER NOT NULL REFERENCES users(id),
+  visibility   TEXT NOT NULL CHECK (visibility IN ('public','private')),
+  buyerUserId  INTEGER REFERENCES users(id),     -- private: the only allowed buyer
+  priceWei     TEXT NOT NULL,
+  price        TEXT NOT NULL,                    -- QUAI
+  priceInr     REAL NOT NULL,
+  markupPct    REAL NOT NULL,                    -- % over face price
+  status       TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','sold','cancelled')),
+  invalidReason TEXT,                            -- "invalid – above new cap" after the organiser lowers the cap
+  openToAllAt  TEXT,                             -- public: until then only waitlisted fans may buy
+  listTx       TEXT,
+  closeTx      TEXT,                             -- the sale or cancellation
+  soldToUserId INTEGER REFERENCES users(id),
+  createdAt    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  closedAt     TEXT
+);
+
+CREATE TABLE IF NOT EXISTS ticket_history (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  tokenId    INTEGER NOT NULL,
+  eventId    INTEGER NOT NULL,
+  kind       TEXT NOT NULL CHECK (kind IN ('minted','gift','sale_public','sale_private','returned','reassigned')),
+  fromUserId INTEGER,
+  toUserId   INTEGER,
+  priceWei   TEXT,
+  priceInr   REAL,
+  txHash     TEXT,
+  at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
 CREATE TABLE IF NOT EXISTS scans (
@@ -142,6 +180,13 @@ db.prepare("INSERT OR IGNORE INTO meta (key, value) VALUES ('contract', ?)").run
 // can't log in as whoever now has the same user id.
 db.prepare("INSERT OR IGNORE INTO meta (key, value) VALUES ('instance', lower(hex(randomblob(16))))").run()
 export const instanceId = meta('instance')
+
+/** One line of a ticket's history (mint, gift, sale, return, reassign). */
+export function logHistory({ tokenId, eventId, kind, fromUserId = null, toUserId = null, priceWei = null, priceInr = null, txHash = null }) {
+  db.prepare(
+    'INSERT INTO ticket_history (tokenId, eventId, kind, fromUserId, toUserId, priceWei, priceInr, txHash) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+  ).run(tokenId, eventId, kind, fromUserId, toUserId, priceWei == null ? null : String(priceWei), priceInr, txHash)
+}
 
 export function logBlocked({ reason, ip, eventId = null, userId = null, detail = null }) {
   db.prepare('INSERT INTO blocked_attempts (reason, ip, eventId, userId, detail) VALUES (?, ?, ?, ?, ?)').run(

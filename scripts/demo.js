@@ -20,6 +20,8 @@ const OTP = '123456'
 const DB = path.join(root, 'backend', 'data', 'demo.db')
 const keep = process.argv.includes('--keep')
 
+const FAN_FUNDING_QUAI = '0.05'
+
 const DEMO_EVENTS = [
   {
     name: 'World Tour',
@@ -167,6 +169,9 @@ async function seed() {
   const fanTokens = []
   for (const f of PEOPLE.fans) fanTokens.push(await verified(f))
   step('5 fans verified')
+  // Buyers pay resale tickets from their own custodial wallet, so give each fan some test QUAI.
+  await Promise.all(PEOPLE.fans.map((f) => must(api('POST', '/admin/fund', { token: org, body: { phone: f.phone, amountQuai: FAN_FUNDING_QUAI } }), `fund ${f.name}`)))
+  step(`Each fan's wallet funded with ${FAN_FUNDING_QUAI} QUAI test money (about 4 resale tickets at demo prices)`)
   // [fan index, event name, quantity]: fans 2-5 in World Tour, two of them also in Monsoon Sessions. Fan 1 enters live.
   const plan = [
     [1, 'World Tour', 2],

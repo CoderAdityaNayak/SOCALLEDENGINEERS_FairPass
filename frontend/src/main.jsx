@@ -11,7 +11,8 @@ import EventPage from './pages/Event.jsx'
 import Enter from './pages/Enter.jsx'
 import MyTickets from './pages/MyTickets.jsx'
 import TicketPage from './pages/Ticket.jsx'
-import Resale from './pages/Resale.jsx'
+import PassOn from './pages/PassOn.jsx'
+import Buy from './pages/Buy.jsx'
 import Gate from './pages/Gate.jsx'
 import Organiser from './pages/Organiser.jsx'
 
@@ -43,7 +44,8 @@ createRoot(document.getElementById('root')).render(
             <Route path="enter/:eventId" element={<Protected><Enter /></Protected>} />
             <Route path="tickets" element={<Protected><MyTickets /></Protected>} />
             <Route path="tickets/:tokenId" element={<Protected><TicketPage /></Protected>} />
-            <Route path="tickets/:tokenId/resale" element={<Protected><Resale /></Protected>} />
+            <Route path="tickets/:tokenId/pass/:mode" element={<Protected><PassOn /></Protected>} />
+            <Route path="buy/:listingId" element={<Buy />} />
             <Route path="gate" element={<Protected roles={['staff', 'organiser']}><Gate /></Protected>} />
             <Route path="organiser" element={<Protected roles={['organiser']}><Organiser /></Protected>} />
             <Route path="*" element={<p className="py-20 text-center text-muted">Page not found.</p>} />

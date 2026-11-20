@@ -70,6 +70,13 @@ export default function MyTickets() {
                       {t.ownedOnChain ? 'On-chain' : 'Not confirmed'}
                     </span>
                   </div>
+                  {(t.acquiredVia === 'gift' || t.acquiredVia === 'purchase' || t.gifted) && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {t.acquiredVia === 'gift' && <Badge tone="lime">Gift from {t.acquiredFrom}</Badge>}
+                      {t.acquiredVia === 'purchase' && <Badge tone="lime">Bought from {t.acquiredFrom}</Badge>}
+                      {t.gifted && <Badge>Gifted ✓</Badge>}
+                    </div>
+                  )}
                   {t.listingInvalid && (
                     <p role="alert" className="mt-3 flex gap-2 rounded-[12px] border border-err/50 bg-err/10 p-3 text-sm text-err-soft">
                       <I.Alert size={16} className="mt-0.5 shrink-0" />

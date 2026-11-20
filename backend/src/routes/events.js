@@ -199,8 +199,9 @@ router.post('/:id/resale-cap', requireRole('organiser'), async (req, res) => {
 
   const updated = getEvent(event.id)
   const max = maxResaleWei(updated)
-  const listings = db.prepare("SELECT tokenId, listedPrice FROM tickets WHERE eventId = ? AND status = 'listed'").all(event.id)
+  const listings = db.prepare("SELECT tokenId, listedPrice, listingId FROM tickets WHERE eventId = ? AND status = 'listed'").all(event.id)
   const mark = db.prepare('UPDATE tickets SET listingInvalid = ? WHERE tokenId = ?')
+  const markListing = db.prepare('UPDATE listings SET invalidReason = ? WHERE id = ?')
   let invalidated = 0
   let revalidated = 0
   db.transaction(() => {
@@ -210,6 +211,7 @@ router.post('/:id/resale-cap', requireRole('organiser'), async (req, res) => {
       if (above && !before) invalidated++
       if (!above && before) revalidated++
       mark.run(above ? INVALID_LISTING : null, t.tokenId)
+      if (t.listingId) markListing.run(above ? INVALID_LISTING : null, t.listingId)
     }
   })()
 

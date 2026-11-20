@@ -30,10 +30,13 @@ const TABLES = {
   blocked_attempts: 'id',
   activity: 'id',
   pow_challenges: 'id',
+  listings: 'id',
+  ticket_history: 'id',
 }
 const BOOLEAN_COLUMNS = {
   users: ['isVerified'],
   pow_challenges: ['solved'],
+  tickets: ['gifted'],
 }
 const BATCH_SIZE = 450 // Firestore allows 500 writes per batch
 
@@ -112,10 +115,33 @@ function enrich(table, d) {
         ...person('owner', owner),
         ownerWallet: owner?.walletAddress ?? null,
         inPool: d.ownerUserId == null,
+        acquiredFromName: get(q.user, d.acquiredFromUserId)?.name ?? null,
         mintTxUrl: txUrl(d.mintTx),
         tokenUrl: `${config.explorer}/token/${config.contract.address}/instance/${d.tokenId}`,
       }
     }
+    case 'listings': {
+      const t = get(q.ticket, d.tokenId)
+      return {
+        ...d,
+        ...eventName,
+        seat: t?.seat ?? null,
+        ...person('seller', get(q.user, d.sellerUserId)),
+        ...person('buyer', get(q.user, d.buyerUserId)),
+        ...person('soldTo', get(q.user, d.soldToUserId)),
+        shareUrl: d.visibility === 'private' ? `${config.frontendOrigin.replace(/\/$/, '')}/buy/${d.id}` : null,
+        listTxUrl: txUrl(d.listTx),
+        closeTxUrl: txUrl(d.closeTx),
+      }
+    }
+    case 'ticket_history':
+      return {
+        ...d,
+        ...eventName,
+        ...person('from', get(q.user, d.fromUserId)),
+        ...person('to', get(q.user, d.toUserId)),
+        txUrl: txUrl(d.txHash),
+      }
     case 'scans': {
       const t = get(q.ticket, d.tokenId)
       const tev = get(q.event, t?.eventId)
@@ -172,6 +198,12 @@ function statsDoc(eventId) {
     partialWinners: n("SELECT COUNT(*) n FROM entries WHERE eventId = ? AND status = 'partial'", id),
     ticketsWon: n('SELECT COALESCE(SUM(ticketsWon),0) n FROM entries WHERE eventId = ?', id),
     invalidListings: n("SELECT COUNT(*) n FROM tickets WHERE eventId = ? AND status = 'listed' AND listingInvalid IS NOT NULL", id),
+    listedPublic: n("SELECT COUNT(*) n FROM listings WHERE eventId = ? AND status = 'active' AND visibility = 'public'", id),
+    listedPrivate: n("SELECT COUNT(*) n FROM listings WHERE eventId = ? AND status = 'active' AND visibility = 'private'", id),
+    soldPublic: n("SELECT COUNT(*) n FROM ticket_history WHERE eventId = ? AND kind = 'sale_public'", id),
+    soldPrivate: n("SELECT COUNT(*) n FROM ticket_history WHERE eventId = ? AND kind = 'sale_private'", id),
+    gifted: n("SELECT COUNT(*) n FROM ticket_history WHERE eventId = ? AND kind = 'gift'", id),
+    returnedToPool: n("SELECT COUNT(*) n FROM ticket_history WHERE eventId = ? AND kind = 'returned'", id),
     resaleCapPct: ev?.resaleCapPct ?? null,
     listedForResale: n("SELECT COUNT(*) n FROM tickets WHERE eventId = ? AND status = 'listed'", id),
     checkedIn: n("SELECT COUNT(*) n FROM tickets WHERE eventId = ? AND status = 'used'", id),
@@ -185,7 +217,7 @@ function statsDoc(eventId) {
     _syncedAt: serverTimestamp(),
   }
 }
-const EVENT_TABLES = new Set(['entries', 'tickets', 'blocked_attempts', 'activity', 'pow_challenges', 'events'])
+const EVENT_TABLES = new Set(['entries', 'tickets', 'blocked_attempts', 'activity', 'pow_challenges', 'events', 'listings', 'ticket_history'])
 
 function summaryDoc(eventId) {
   const where = eventId === 'global' ? 'eventId IS NULL' : 'eventId = ?'
@@ -464,5 +496,13 @@ export async function startFirestoreMirror() {
   })()
   const every = Math.max(15, Number(process.env.FIRESTORE_CHECK_SECONDS || 60)) * 1000
   setInterval(check, every).unref()
+  return true
+}
+
+/** Writes one contract event (from the chain listener) to fairpass/live/chain_events/{id}. */
+export async function writeChainEvent(id, data) {
+  if (!fs) return false
+  await setDoc(doc(fs, ...BASE, 'chain_events', id), { ...data, _syncedAt: serverTimestamp() })
+  mirrorStatus.written++
   return true
 }

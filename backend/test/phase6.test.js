@@ -11,12 +11,14 @@ const dbFile = path.join(os.tmpdir(), `fairpass-test6-${Date.now()}.db`)
 process.env.DATABASE_PATH = dbFile
 process.env.DEMO_MODE = '1'
 process.env.DEMO_FIXED_OTP = ''
+process.env.LISTING_PRIORITY_MINUTES = '0' // no waitlist-only window in this test (e2e covers it)
 
 const { createApp } = await import('../src/app.js')
 const { ensureOrganiser, getUser } = await import('../src/services/users.js')
 const { db } = await import('../src/db.js')
 const quai = await import('../src/services/quai.js')
 const { mintToUser } = await import('../src/services/tickets.js')
+const { payWithWork } = await import('x402-work-client')
 
 let server, base, event, orgToken
 const org = ensureOrganiser()
@@ -81,14 +83,24 @@ test('resale: over-cap rejected with the ₹ maximum; list at the cap; buyer pay
   assert.equal(over.body.maxPriceInr, 4950)
   assert.match(over.body.error, /₹4,950/)
 
-  const listed = await api('POST', `/tickets/${ticket.tokenId}/list`, { priceInr: 4950 }, seller.token)
-  assert.equal(listed.status, 200, JSON.stringify(listed.body))
-  assert.equal(listed.body.ticket.listedPrice, '0.011')
-  assert.equal(listed.body.ticket.listedPriceInr, 4950)
+  const listed = await api('POST', `/tickets/${ticket.tokenId}/list`, { priceInr: 4950, visibility: 'public' }, seller.token)
+  assert.equal(listed.status, 201, JSON.stringify(listed.body))
+  assert.equal(listed.body.listing.price, '0.011')
+  assert.equal(listed.body.listing.priceInr, 4950)
+  const market = (await api('GET', `/events/${event.id}/marketplace`)).body
+  assert.ok(market.listings.some((l) => l.id === listed.body.listing.id))
+
+  // The buyer pays from their own wallet: no money -> clear error; then fund it (demo seed does the same).
+  const broke = await api('POST', `/listings/${listed.body.listing.id}/buy`, {}, buyer.token)
+  assert.equal(broke.body.reason, 'NOT_ENOUGH_BALANCE')
+  await quai.fund(buyer.user.walletAddress, quai.quais.parseQuai('0.02'))
 
   const sellerBefore = await quai.provider.getBalance(seller.user.walletAddress)
-  const bought = await api('POST', `/tickets/${ticket.tokenId}/buy`, {}, buyer.token)
-  assert.equal(bought.status, 200, JSON.stringify(bought.body))
+  const { response } = await payWithWork(`${base}/listings/${listed.body.listing.id}/buy`, {}, {
+    headers: { authorization: `Bearer ${buyer.token}` },
+    maxPrice: 1_000_000,
+  })
+  assert.equal(response.status, 201, await response.clone().text())
   assert.equal((await quai.ownerOf(ticket.tokenId)).toLowerCase(), buyer.user.walletAddress.toLowerCase())
   const sellerAfter = await quai.provider.getBalance(seller.user.walletAddress)
   const expected = quai.quais.parseQuai('0.011') - quai.quais.parseQuai('0.011') / 50n
@@ -112,8 +124,8 @@ test('raise cap to 15% -> list at +12%; lower to 5% -> listing invalid, cannot b
 
   const above = await api('POST', `/tickets/${ticket2.tokenId}/list`, { priceInr: 5220 }, seller.token) // +16%
   assert.equal(above.body.reason, 'PRICE_ABOVE_CAP')
-  const listed = await api('POST', `/tickets/${ticket2.tokenId}/list`, { priceInr: 5040 }, seller.token) // +12%
-  assert.equal(listed.status, 200, JSON.stringify(listed.body))
+  const listed = await api('POST', `/tickets/${ticket2.tokenId}/list`, { priceInr: 5040, visibility: 'public' }, seller.token) // +12%
+  assert.equal(listed.status, 201, JSON.stringify(listed.body))
 
   const down = await api('POST', `/events/${event.id}/resale-cap`, { pct: 5 }, orgToken)
   assert.equal(down.status, 200, JSON.stringify(down.body))
@@ -121,8 +133,8 @@ test('raise cap to 15% -> list at +12%; lower to 5% -> listing invalid, cannot b
   assert.equal(down.body.event.maxResalePriceInr, 4725)
   const mine = (await api('GET', '/me/tickets', null, seller.token)).body.tickets.find((t) => t.tokenId === ticket2.tokenId)
   assert.equal(mine.listingInvalid, 'invalid – above new cap')
-  assert.ok(!(await api('GET', `/resale?eventId=${event.id}`)).body.listings.some((l) => l.tokenId === ticket2.tokenId))
-  const buy = await api('POST', `/tickets/${ticket2.tokenId}/buy`, {}, buyer.token)
+  assert.ok(!(await api('GET', `/events/${event.id}/marketplace`)).body.listings.some((l) => l.tokenId === ticket2.tokenId))
+  const buy = await api('POST', `/listings/${listed.body.listing.id}/buy`, {}, buyer.token)
   assert.equal(buy.status, 409)
   assert.equal(buy.body.reason, 'LISTING_INVALID')
   const stats = (await api('GET', `/events/${event.id}/stats`)).body

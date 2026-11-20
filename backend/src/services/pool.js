@@ -1,5 +1,5 @@
 // Return-to-pool and reassignment to the waitlist.
-import { db, logActivity } from '../db.js'
+import { db, logActivity, logHistory } from '../db.js'
 import { HttpError } from '../auth.js'
 import * as quai from './quai.js'
 import { getUser } from './users.js'
@@ -21,10 +21,10 @@ export const reassignments = new Map()
 /** Gives a pooled ticket to `user` on-chain (organiser calls reassign). */
 export async function reassignTo(ticket, user, { entry = null, kind = 'reassigned' } = {}) {
   const { hash } = await quai.reassign(ticket.tokenId, user.walletAddress)
-  db.prepare("UPDATE tickets SET ownerUserId = ?, status = 'active', listedPrice = NULL, listedPriceInr = NULL, listingInvalid = NULL WHERE tokenId = ?").run(
-    user.id,
-    ticket.tokenId,
-  )
+  db.prepare(
+    "UPDATE tickets SET ownerUserId = ?, status = 'active', listedPrice = NULL, listedPriceInr = NULL, listingInvalid = NULL, listingId = NULL, acquiredVia = 'waitlist', acquiredFromUserId = NULL WHERE tokenId = ?",
+  ).run(user.id, ticket.tokenId)
+  logHistory({ tokenId: ticket.tokenId, eventId: ticket.eventId, kind: 'reassigned', toUserId: user.id, txHash: hash })
   if (entry) {
     // One more ticket for this entry; it's fully served once it has the quantity it asked for.
     db.prepare(
@@ -66,9 +66,13 @@ export async function returnTicket(ticket, owner) {
 
   const event = db.prepare('SELECT * FROM events WHERE id = ?').get(ticket.eventId)
   const { hash } = await quai.returnToPool(quai.walletForUser(owner), ticket.tokenId)
+  // returnToPool also clears an on-chain listing; close it here too.
+  if (ticket.listingId)
+    db.prepare("UPDATE listings SET status = 'cancelled', closeTx = ?, closedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ? AND status = 'active'").run(hash, ticket.listingId)
   db.prepare(
-    "UPDATE tickets SET ownerUserId = NULL, status = 'returned', listedPrice = NULL, listedPriceInr = NULL, listingInvalid = NULL WHERE tokenId = ?",
+    "UPDATE tickets SET ownerUserId = NULL, status = 'returned', listedPrice = NULL, listedPriceInr = NULL, listingInvalid = NULL, listingId = NULL WHERE tokenId = ?",
   ).run(ticket.tokenId)
+  logHistory({ tokenId: ticket.tokenId, eventId: ticket.eventId, kind: 'returned', fromUserId: owner.id, priceWei: quai.quais.parseQuai(event.facePrice), priceInr: event.facePriceInr, txHash: hash })
   logActivity({ eventId: ticket.eventId, kind: 'returned', tokenId: ticket.tokenId, userId: owner.id, txHash: hash })
   logActivity({ eventId: ticket.eventId, kind: 'refund', tokenId: ticket.tokenId, userId: owner.id, detail: `${event.facePrice} QUAI (mock)` })
 

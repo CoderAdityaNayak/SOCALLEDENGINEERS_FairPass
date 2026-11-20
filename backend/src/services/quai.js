@@ -82,10 +82,38 @@ export function decodeError(err) {
   return { name: null, message: err?.shortMessage || err?.message || String(err) }
 }
 
+/** Plain-language messages for the contract's custom errors. */
+export const REVERT_MESSAGES = {
+  PriceAboveCap: 'The price is above the resale cap (the organiser may have lowered it).',
+  NotListed: 'This ticket is no longer for sale (already sold or the listing was cancelled).',
+  NotAllowedBuyer: 'This private listing is for someone else.',
+  AlreadyGifted: 'This ticket was already gifted once and cannot be gifted again.',
+  TransfersLocked: 'Transfers are locked: no gifts, listings or purchases in the last 24 hours before the event.',
+  TicketIsListed: 'This ticket is listed for resale. Cancel the listing first.',
+  TicketAlreadyUsed: 'This ticket has already been used at the gate.',
+  NotTicketOwner: 'You do not own this ticket.',
+  InvalidAddress: "You can't buy from or gift to yourself.",
+  WrongPayment: 'The payment does not match the listed price.',
+  TransfersDisabled: 'Tickets can only move through FairPass.',
+  SoldOut: 'No tickets left for this event.',
+}
+
 export class ChainError extends Error {
   constructor(err, action) {
     const info = decodeError(err)
-    super(info.name ? `${action} reverted: ${info.name}` : `${action} failed: ${info.message}`)
+    const insufficient = /insufficient funds/i.test(info.message || '')
+    super(
+      info.name
+        ? REVERT_MESSAGES[info.name] || `${action} reverted: ${info.name}`
+        : insufficient
+          ? 'Not enough balance in the wallet to pay for this.'
+          : `${action} failed: ${info.message}`,
+    )
+    if (insufficient) {
+      this.reason = 'NOT_ENOUGH_BALANCE'
+      this.status = 409
+      return
+    }
     this.reason = info.name
     this.status = info.name ? 409 : 502
   }
@@ -147,11 +175,14 @@ async function send(wallet, action, method, args, overrides = {}) {
 // ------------------------------------------------------------------ gas sponsoring (mocked fiat)
 
 /** Tops up a custodial wallet so it can pay gas (and `extraWei` for a purchase). Organiser pays. */
-export async function sponsor(address, extraWei = 0n) {
+/**
+ * Makes sure a custodial wallet can pay GAS on top of `reserveWei` (e.g. a ticket price it must pay itself).
+ * The organiser only ever sends gas money here, never the ticket price.
+ */
+export async function sponsor(address, reserveWei = 0n) {
   const balance = await provider.getBalance(address)
-  const min = quais.parseQuai(config.gasMinQuai) + extraWei
-  if (balance >= min) return null
-  const value = quais.parseQuai(config.gasTopUpQuai) + extraWei
+  if (balance - reserveWei >= quais.parseQuai(config.gasMinQuai)) return null
+  const value = quais.parseQuai(config.gasTopUpQuai)
   const tx = await broadcast(organiser, (nonce) =>
     organiser.sendTransaction({ from: organiser.address, to: address, value, nonce }),
   )
@@ -218,9 +249,26 @@ export async function addGateStaff(address) {
 
 // ------------------------------------------------------------------ ticket-holder writes (custodial)
 
-export async function listForResale(wallet, tokenId, priceWei) {
+export const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
+
+/** Lists a ticket. allowedBuyer = ZERO_ADDRESS: public; otherwise only that wallet can buy. */
+export async function listForResale(wallet, tokenId, priceWei, allowedBuyer = ZERO_ADDRESS) {
   await sponsor(wallet.address)
-  return send(wallet, 'listForResale', 'listForResale', [tokenId, priceWei])
+  return send(wallet, 'listForResale', 'listForResale', [tokenId, priceWei, allowedBuyer])
+}
+
+export async function giftTicket(wallet, tokenId, to) {
+  await sponsor(wallet.address)
+  return send(wallet, 'giftTicket', 'giftTicket', [tokenId, to])
+}
+
+export const balanceOf = (address) => provider.getBalance(address)
+
+/** Demo seed: the organiser sends test QUAI to a wallet so its owner can buy resale tickets. */
+export async function fund(address, amountWei) {
+  const tx = await broadcast(organiser, (nonce) => organiser.sendTransaction({ from: organiser.address, to: address, value: amountWei, nonce }))
+  await tx.wait()
+  return tx.hash
 }
 
 export async function cancelListing(wallet, tokenId) {
@@ -228,8 +276,9 @@ export async function cancelListing(wallet, tokenId) {
   return send(wallet, 'cancelListing', 'cancelListing', [tokenId])
 }
 
+/** The buyer pays the price from their own wallet; the organiser only tops up gas if needed. */
 export async function buyResale(wallet, tokenId, priceWei) {
-  await sponsor(wallet.address, priceWei) // mock: the fan "pays" fiat, the organiser funds the wallet
+  await sponsor(wallet.address, priceWei)
   return send(wallet, 'buyResale', 'buyResale', [tokenId], { value: priceWei })
 }
 

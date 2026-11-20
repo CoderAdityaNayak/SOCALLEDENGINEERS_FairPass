@@ -10,6 +10,7 @@ const REJECT_TEXT = {
   NOT_ON_CHAIN: 'This ticket was never minted by FairPass. It is fake.',
   NOT_OWNER: 'The QR was not signed by the wallet that owns this ticket.',
   ALREADY_USED: 'This ticket has already been checked in.',
+  LISTED: 'This ticket is listed for resale. The owner must cancel the listing before entering.',
   MALFORMED: 'This is not a FairPass QR code.',
 }
 

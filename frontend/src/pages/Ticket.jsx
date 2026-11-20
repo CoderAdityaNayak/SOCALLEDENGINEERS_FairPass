@@ -4,7 +4,8 @@ import { Link, useParams } from 'react-router'
 import { QRCodeSVG } from 'qrcode.react'
 import { api } from '../lib/api.js'
 import { dateLong, inr } from '../lib/format.js'
-import { ErrorNote, Spinner } from '../components/ui.jsx'
+import { Badge, Button, Card, ErrorNote, Spinner, TxLink } from '../components/ui.jsx'
+import { LockCountdown } from '../components/Transfer.jsx'
 import * as I from '../components/Icons.jsx'
 
 const PERIOD = 30
@@ -38,16 +39,36 @@ export default function TicketPage() {
   const [left, setLeft] = useState(PERIOD)
   const [error, setError] = useState(null)
   const [copied, setCopied] = useState(false)
+  const [sheet, setSheet] = useState(false)
+  const [cancelling, setCancelling] = useState(false)
 
+  const loadTicket = useCallback(
+    () =>
+      api('/me/tickets')
+        .then((d) => {
+          const t = d.tickets.find((x) => String(x.tokenId) === tokenId)
+          if (!t) throw new Error('This ticket is not in your account (it may have been passed on)')
+          setTicket(t)
+        })
+        .catch(setError),
+    [tokenId],
+  )
   useEffect(() => {
-    api('/me/tickets')
-      .then((d) => {
-        const t = d.tickets.find((x) => String(x.tokenId) === tokenId)
-        if (!t) throw new Error('This ticket is not in your account')
-        setTicket(t)
-      })
-      .catch(setError)
-  }, [tokenId])
+    loadTicket()
+  }, [loadTicket])
+
+  async function cancelListing() {
+    setCancelling(true)
+    setError(null)
+    try {
+      await api(`/tickets/${tokenId}/cancel-listing`, { method: 'POST' })
+      await loadTicket()
+    } catch (err) {
+      setError(err)
+    } finally {
+      setCancelling(false)
+    }
+  }
 
   const refresh = useCallback(async () => {
     try {
@@ -172,23 +193,177 @@ export default function TicketPage() {
 
       {error && <ErrorNote error={error} className="mt-4" />}
 
-      {active && ticket.status !== 'listed' && (
-        <Link to={`/tickets/${ticket.tokenId}/resale`} className="mt-5 flex min-h-12 items-center justify-center gap-2 rounded-[14px] border border-line font-semibold hover:border-muted">
-          Can't go?
-        </Link>
+      {(ticket.acquiredVia === 'gift' || ticket.acquiredVia === 'purchase' || ticket.gifted) && (
+        <div className="mt-4 flex flex-wrap gap-2">
+          {ticket.acquiredVia === 'gift' && <Badge tone="lime">Gift from {ticket.acquiredFrom}</Badge>}
+          {ticket.acquiredVia === 'purchase' && <Badge tone="lime">Bought from {ticket.acquiredFrom}</Badge>}
+          {ticket.gifted && <Badge>Gifted ✓ · can't be gifted again</Badge>}
+        </div>
       )}
-      {ticket.status === 'listed' && ticket.listingInvalid && (
-        <p role="alert" className="mt-5 flex gap-2 rounded-[14px] border border-err/50 bg-err/10 p-3 text-sm text-err-soft">
-          <I.Alert size={16} className="mt-0.5 shrink-0" />
-          Your listing at {inr(ticket.listedPriceInr)} is above the new resale cap (max {inr(ticket.maxResalePriceInr)}, +{ticket.resaleCapPct}%) and
-          can't be bought.
-        </p>
-      )}
+
       {ticket.status === 'listed' && (
-        <Link to={`/tickets/${ticket.tokenId}/resale`} className="mt-3 flex min-h-12 items-center justify-center rounded-[14px] border border-line font-semibold">
-          Listed for {inr(ticket.listedPriceInr)} · manage
-        </Link>
+        <Card className="mt-4">
+          <div className="flex items-center justify-between gap-3">
+            <Badge tone={ticket.listingInvalid ? 'err' : 'lime'}>
+              <I.Tag size={12} /> Listed for {inr(ticket.listedPriceInr)}
+              {ticket.listing?.visibility === 'private' ? ' · private' : ''}
+            </Badge>
+            <Button variant="secondary" className="min-h-10 text-sm" loading={cancelling} onClick={cancelListing}>
+              Cancel listing
+            </Button>
+          </div>
+          {ticket.listing?.visibility === 'private' && (
+            <p className="mt-3 text-sm text-muted">
+              Only {ticket.listing.buyerName} can buy it. Share link: <span className="break-all font-mono text-ink">{ticket.listing.shareUrl}</span>
+            </p>
+          )}
+          {ticket.listingInvalid && (
+            <p role="alert" className="mt-3 text-sm text-err-soft">
+              Above the new resale cap (max {inr(ticket.maxResalePriceInr)}, +{ticket.resaleCapPct}%): nobody can buy it. Cancel and relist.
+            </p>
+          )}
+          <p className="mt-2 text-xs text-muted">A listed ticket can't be used at the gate. Cancel the listing to go in.</p>
+        </Card>
       )}
+
+      {active && ticket.status !== 'listed' && (
+        <>
+          <Button className="mt-5 w-full" onClick={() => setSheet(true)}>
+            Pass it on
+          </Button>
+          <LockCountdown lockAt={ticket.lockAt} className="mt-2 justify-center" />
+        </>
+      )}
+
+      <TicketHistory tokenId={ticket.tokenId} />
+
+      {sheet && <PassSheet ticket={ticket} onClose={() => setSheet(false)} />}
     </div>
+  )
+}
+
+/** Bottom sheet with the four ways to pass a ticket on. */
+function PassSheet({ ticket, onClose }) {
+  const locked = ticket.locked || Date.now() >= Date.parse(ticket.lockAt)
+  const options = [
+    { mode: 'return', icon: I.Undo, title: 'Return to pool', text: `Get ${inr(ticket.facePriceInr)} back. It goes to the next waitlisted fan.`, recommended: true },
+    {
+      mode: 'gift',
+      icon: I.Users,
+      title: 'Gift to a friend',
+      text: ticket.gifted ? 'Already gifted once: this ticket can’t be gifted again.' : 'Free, to one verified FairPass user. Once per ticket.',
+      disabled: ticket.gifted || ticket.giftsLeftThisEvent === 0,
+    },
+    { mode: 'private', icon: I.Link, title: 'Sell privately', text: `To one person, by phone and share link. Up to ${inr(ticket.maxResalePriceInr)}.` },
+    { mode: 'public', icon: I.Tag, title: 'Sell publicly', text: `On the event’s Resale tab. Up to ${inr(ticket.maxResalePriceInr)}.` },
+  ]
+  useEffect(() => {
+    const onKey = (e) => e.key === 'Escape' && onClose()
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+  return (
+    <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/60 sm:items-center" onClick={onClose}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="pass-title"
+        className="max-h-[90dvh] w-full max-w-md overflow-y-auto rounded-t-[22px] border border-line bg-card p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))] sm:rounded-[22px]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 id="pass-title" className="text-xl">
+              Pass it on
+            </h2>
+            <p className="text-sm text-muted">
+              Face {inr(ticket.facePriceInr)} · max resale {inr(ticket.maxResalePriceInr)} (+{ticket.resaleCapPct}%)
+            </p>
+            <LockCountdown lockAt={ticket.lockAt} className="mt-1" />
+          </div>
+          <button onClick={onClose} className="grid size-10 place-items-center rounded-[12px] text-muted hover:text-ink" aria-label="Close">
+            <I.X size={20} />
+          </button>
+        </div>
+        <ul className="mt-4 space-y-2">
+          {options.map((o) => {
+            const off = o.disabled || (locked && o.mode !== 'return')
+            const inner = (
+              <>
+                <span className={`grid size-10 shrink-0 place-items-center rounded-[12px] ${o.recommended ? 'bg-lime/15 text-lime' : 'bg-raised text-ink'}`}>
+                  <o.icon size={20} />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-2 font-semibold">
+                    {o.title} {o.recommended && <Badge tone="lime">Recommended</Badge>}
+                  </span>
+                  <span className="block text-sm text-muted">{locked && o.mode !== 'return' ? 'Locked in the last 24 h before the show.' : o.text}</span>
+                </span>
+                {!off && <I.ArrowRight size={18} className="shrink-0 text-muted" />}
+              </>
+            )
+            return (
+              <li key={o.mode}>
+                {off ? (
+                  <div className="flex min-h-16 items-center gap-3 rounded-[16px] border border-line p-3 opacity-50" aria-disabled="true">
+                    {inner}
+                  </div>
+                ) : (
+                  <Link
+                    to={`/tickets/${ticket.tokenId}/pass/${o.mode}`}
+                    className={`flex min-h-16 items-center gap-3 rounded-[16px] border p-3 hover:border-muted ${o.recommended ? 'border-lime/40' : 'border-line'}`}
+                  >
+                    {inner}
+                  </Link>
+                )}
+              </li>
+            )
+          })}
+        </ul>
+      </div>
+    </div>
+  )
+}
+
+const HISTORY_LABEL = {
+  minted: 'Won in the draw',
+  reassigned: 'From the waitlist',
+  gift: 'Gifted',
+  sale_public: 'Sold (public)',
+  sale_private: 'Sold (private)',
+  returned: 'Returned to pool',
+}
+
+function TicketHistory({ tokenId }) {
+  const [rows, setRows] = useState(null)
+  useEffect(() => {
+    api(`/tickets/${tokenId}/history`)
+      .then((r) => setRows(r.history))
+      .catch(() => setRows([]))
+  }, [tokenId])
+  if (!rows?.length) return null
+  return (
+    <Card className="mt-6">
+      <h2 className="text-lg">Ticket history</h2>
+      <ol className="mt-3 space-y-3">
+        {rows.map((h, i) => (
+          <li key={i} className="flex gap-3 text-sm">
+            <span className="mt-1.5 size-2 shrink-0 rounded-full bg-lime" aria-hidden="true" />
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold">
+                {HISTORY_LABEL[h.kind] || h.kind}
+                {h.kind === 'minted' && h.priceInr != null && ` · face ${inr(h.priceInr)}`}
+                {(h.kind === 'sale_public' || h.kind === 'sale_private') && ` · ${inr(h.priceInr)}`}
+              </p>
+              <p className="text-muted">
+                {h.from && `${h.from} → `}
+                {h.to || (h.kind === 'returned' ? 'pool' : '')} · {new Date(h.at).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+              </p>
+              {h.tx && <TxLink href={h.tx}>Quaiscan</TxLink>}
+            </div>
+          </li>
+        ))}
+      </ol>
+    </Card>
   )
 }

@@ -1,21 +1,32 @@
-// My tickets, rotating QR, resale (list / cancel / buy) and return-to-pool.
+// My tickets, rotating QR gate pass, return-to-pool. (Listing, gifting and buying live in routes/market.js.)
 import { Router } from 'express'
-import { db, logActivity } from '../db.js'
-import { HttpError, requireAuth, requireVerified } from '../auth.js'
+import { config } from '../config.js'
+import { db } from '../db.js'
+import { HttpError, requireAuth } from '../auth.js'
 import * as quai from '../services/quai.js'
 import { getTicket, splitSeat } from '../services/tickets.js'
 import { gatePassMessage } from '../services/gatepass.js'
 import { reassignments, returnTicket } from '../services/pool.js'
 import { getUser } from '../services/users.js'
-import { faceInr, formatInr, listingWei, maxResaleInr, maxResaleWei, weiToInr } from '../services/money.js'
+import { faceInr, maxResaleInr, maxResaleWei } from '../services/money.js'
+import { isLocked, lockAt } from '../services/lock.js'
 
 export const router = Router()
 
 const getEventRow = (id) => db.prepare('SELECT * FROM events WHERE id = ?').get(id)
+const firstName = (u) => (u?.name ? u.name.split(' ')[0] : null)
+const MAX_GIFTS_PER_EVENT = 2
 
-export function publicTicket(t, { withChain } = {}) {
+export function publicTicket(t, { withChain, viewer } = {}) {
   const event = getEventRow(t.eventId)
   const owner = t.ownerUserId ? getUser(t.ownerUserId) : null
+  const from = t.acquiredFromUserId ? getUser(t.acquiredFromUserId) : null
+  const listing = t.listingId ? db.prepare('SELECT * FROM listings WHERE id = ?').get(t.listingId) : null
+  const buyer = listing?.buyerUserId ? getUser(listing.buyerUserId) : null
+  const giftsGiven =
+    viewer && viewer.id === t.ownerUserId
+      ? db.prepare("SELECT COUNT(*) n FROM ticket_history WHERE kind = 'gift' AND fromUserId = ? AND eventId = ?").get(viewer.id, t.eventId).n
+      : null
   return {
     tokenId: t.tokenId,
     eventId: t.eventId,
@@ -29,9 +40,26 @@ export function publicTicket(t, { withChain } = {}) {
     resaleCapPct: event.resaleCapPct,
     maxResalePrice: quai.quais.formatQuai(maxResaleWei(event)),
     maxResalePriceInr: maxResaleInr(event),
+    // How the holder got it: "Gift from Asha" / "Bought from Ravi"
+    acquiredVia: t.acquiredVia,
+    acquiredFrom: firstName(from),
+    gifted: !!t.gifted, // already gifted once: can't be gifted again
+    giftsLeftThisEvent: giftsGiven == null ? null : Math.max(0, MAX_GIFTS_PER_EVENT - giftsGiven),
+    listing: listing && {
+      id: listing.id,
+      visibility: listing.visibility,
+      priceInr: listing.priceInr,
+      price: listing.price,
+      buyerName: buyer?.name || null,
+      shareUrl: listing.visibility === 'private' ? `${config.frontendOrigin.replace(/\/$/, '')}/buy/${listing.id}` : null,
+      openToAllAt: listing.visibility === 'public' ? listing.openToAllAt : null,
+      tx: listing.listTx ? quai.explorerTx(listing.listTx) : null,
+    },
     listedPrice: t.listedPrice,
     listedPriceInr: t.listedPriceInr,
     listingInvalid: t.listingInvalid, // "invalid – above new cap" after the organiser lowered the cap
+    lockAt: lockAt(event),
+    locked: isLocked(event),
     explorer: quai.explorerToken(t.tokenId),
     mintTx: t.mintTx ? quai.explorerTx(t.mintTx) : null,
     contract: quai.contract.target,
@@ -56,7 +84,7 @@ router.get('/me/tickets', requireAuth, async (req, res) => {
         onChainOwner = await quai.ownerOf(t.tokenId)
       } catch {}
       const ownedOnChain = !!onChainOwner && onChainOwner.toLowerCase() === req.user.walletAddress.toLowerCase()
-      return publicTicket(t, { withChain: { onChainOwner, ownedOnChain } })
+      return publicTicket(t, { withChain: { onChainOwner, ownedOnChain }, viewer: req.user })
     }),
   )
   const entries = db
@@ -71,6 +99,7 @@ router.get('/me/tickets', requireAuth, async (req, res) => {
 /**
  * POST /tickets/:id/qr: a gate pass {tokenId, timestamp, signature}, personal-signed by the owner's
  * custodial key. The app asks for a new one every 30 s, so a screenshot is useless soon after.
+ * After any transfer the old owner can't get a pass, and old passes fail (signer != ownerOf).
  */
 router.post('/tickets/:id/qr', requireAuth, async (req, res) => {
   const ticket = requireOwnedTicket(req)
@@ -79,90 +108,6 @@ router.post('/tickets/:id/qr', requireAuth, async (req, res) => {
   const signature = await quai.walletForUser(req.user).signMessage(gatePassMessage(ticket.tokenId, timestamp))
   const payload = { tokenId: ticket.tokenId, timestamp, signature }
   res.json({ qr: JSON.stringify(payload), payload, refreshInSeconds: 30 })
-})
-
-/** GET /resale?eventId=: tickets listed for resale (listings above the current cap are hidden). */
-router.get('/resale', (req, res) => {
-  const eventId = Number(req.query.eventId) || null
-  const rows = db
-    .prepare(`SELECT * FROM tickets WHERE status = 'listed' AND listingInvalid IS NULL ${eventId ? 'AND eventId = ?' : ''} ORDER BY tokenId`)
-    .all(...(eventId ? [eventId] : []))
-  res.json({ listings: rows.map((t) => publicTicket(t)) })
-})
-
-/**
- * POST /tickets/:id/list {priceInr}  (or {price} in QUAI)
- * Capped at face + the event's CURRENT resale % (the backend checks it here and the contract enforces it).
- */
-router.post('/tickets/:id/list', requireAuth, async (req, res) => {
-  const ticket = requireOwnedTicket(req)
-  const event = getEventRow(ticket.eventId)
-  if (ticket.status === 'used') throw new HttpError(409, 'A used ticket cannot be resold', { reason: 'TICKET_USED' })
-  if (ticket.status === 'listed') throw new HttpError(409, 'Already listed. Cancel the listing first.')
-
-  let priceWei
-  try {
-    if (req.body?.priceInr != null && req.body.priceInr !== '') priceWei = listingWei(req.body.priceInr, event)
-    else priceWei = quai.quais.parseQuai(String(req.body?.price ?? ''))
-  } catch {
-    throw new HttpError(400, 'Enter a price in ₹, e.g. 4950')
-  }
-  if (!(priceWei > 0n)) throw new HttpError(400, 'Price must be more than ₹0')
-  const cap = maxResaleWei(event)
-  if (priceWei > cap) {
-    throw new HttpError(
-      422,
-      `Above the cap. The most you can ask is ${formatInr(maxResaleInr(event))} (face price + ${event.resaleCapPct}%). The FairPass contract would reject this price.`,
-      { reason: 'PRICE_ABOVE_CAP', maxPrice: quai.quais.formatQuai(cap), maxPriceInr: maxResaleInr(event), resaleCapPct: event.resaleCapPct },
-    )
-  }
-
-  const { hash } = await quai.listForResale(quai.walletForUser(req.user), ticket.tokenId, priceWei)
-  const price = quai.quais.formatQuai(priceWei)
-  db.prepare("UPDATE tickets SET status = 'listed', listedPrice = ?, listedPriceInr = ?, listingInvalid = NULL WHERE tokenId = ?").run(
-    price,
-    priceWei === cap ? maxResaleInr(event) : weiToInr(priceWei), // a listing "at the max" shows the clean ₹ max
-    ticket.tokenId,
-  )
-  logActivity({ eventId: ticket.eventId, kind: 'listed', tokenId: ticket.tokenId, userId: req.user.id, txHash: hash, detail: `${price} QUAI` })
-  res.json({ ticket: publicTicket(getTicket(ticket.tokenId)), txHash: hash, tx: quai.explorerTx(hash) })
-})
-
-router.post('/tickets/:id/cancel', requireAuth, async (req, res) => {
-  const ticket = requireOwnedTicket(req)
-  if (ticket.status !== 'listed') throw new HttpError(409, 'This ticket is not listed')
-  const { hash } = await quai.cancelListing(quai.walletForUser(req.user), ticket.tokenId)
-  db.prepare("UPDATE tickets SET status = 'active', listedPrice = NULL, listedPriceInr = NULL, listingInvalid = NULL WHERE tokenId = ?").run(
-    ticket.tokenId,
-  )
-  logActivity({ eventId: ticket.eventId, kind: 'unlisted', tokenId: ticket.tokenId, userId: req.user.id, txHash: hash })
-  res.json({ ticket: publicTicket(getTicket(ticket.tokenId)), txHash: hash })
-})
-
-/** POST /tickets/:id/buy: buy a listed ticket at its listed price (payment mocked: the organiser funds the buyer's wallet). */
-router.post('/tickets/:id/buy', requireAuth, requireVerified, async (req, res) => {
-  const ticket = getTicket(Number(req.params.id))
-  if (!ticket || ticket.status !== 'listed') throw new HttpError(404, 'This ticket is not for sale')
-  if (ticket.ownerUserId === req.user.id) throw new HttpError(409, 'You already own this ticket')
-  if (ticket.listingInvalid)
-    throw new HttpError(409, 'This listing is above the current resale cap and cannot be bought', { reason: 'LISTING_INVALID' })
-
-  const priceWei = await quai.listedPrice(ticket.tokenId)
-  if (priceWei === 0n) throw new HttpError(409, 'The listing is no longer active on-chain')
-  const seller = getUser(ticket.ownerUserId)
-  const { hash } = await quai.buyResale(quai.walletForUser(req.user), ticket.tokenId, priceWei)
-  db.prepare(
-    "UPDATE tickets SET ownerUserId = ?, status = 'active', listedPrice = NULL, listedPriceInr = NULL, listingInvalid = NULL WHERE tokenId = ?",
-  ).run(req.user.id, ticket.tokenId)
-  logActivity({
-    eventId: ticket.eventId,
-    kind: 'resold',
-    tokenId: ticket.tokenId,
-    userId: req.user.id,
-    txHash: hash,
-    detail: `${quai.quais.formatQuai(priceWei)} QUAI from user ${seller?.id}`,
-  })
-  res.json({ ticket: publicTicket(getTicket(ticket.tokenId)), txHash: hash, tx: quai.explorerTx(hash) })
 })
 
 /** POST /tickets/:id/return: give it back for the face price; it goes to the next waitlisted fan. */

@@ -55,6 +55,16 @@ export async function enterWithWork(token, eventId, quantity = 1) {
   return { status: response.status, data, payment }
 }
 
+/** Buys a resale listing, solving the x402 Work puzzle like a fan's browser does. */
+export async function buyWithWork(token, listingId) {
+  const { response, payment } = await payWithWork(`${API}/listings/${listingId}/buy`, {}, { headers: { authorization: `Bearer ${token}` }, maxPrice: 1_000_000 })
+  let data = {}
+  try {
+    data = await response.json()
+  } catch {}
+  return { status: response.status, data, payment }
+}
+
 /** Runs async jobs with a concurrency limit. */
 export async function pool(items, limit, fn) {
   const results = new Array(items.length)

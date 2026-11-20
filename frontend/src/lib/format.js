@@ -36,5 +36,6 @@ export const GATE_RESULTS = {
   NOT_ON_CHAIN: 'Not on-chain',
   NOT_OWNER: 'Not the owner',
   ALREADY_USED: 'Already used',
+  LISTED: 'Listed for resale',
   MALFORMED: 'Not a FairPass QR',
 }

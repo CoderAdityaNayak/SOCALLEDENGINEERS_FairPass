@@ -184,6 +184,16 @@ router.get('/:id/stats', (req, res) => {
     tickets: {
       minted: activity('minted'),
       forSale: one("SELECT COUNT(*) n FROM tickets WHERE eventId = ? AND status = 'listed' AND listingInvalid IS NULL", id).n,
+      listedPublic: one("SELECT COUNT(*) n FROM listings WHERE eventId = ? AND status = 'active' AND visibility = 'public'", id).n,
+      listedPrivate: one("SELECT COUNT(*) n FROM listings WHERE eventId = ? AND status = 'active' AND visibility = 'private'", id).n,
+      soldPublic: one("SELECT COUNT(*) n FROM ticket_history WHERE eventId = ? AND kind = 'sale_public'", id).n,
+      soldPrivate: one("SELECT COUNT(*) n FROM ticket_history WHERE eventId = ? AND kind = 'sale_private'", id).n,
+      gifted: one("SELECT COUNT(*) n FROM ticket_history WHERE eventId = ? AND kind = 'gift'", id).n,
+      returnedToPool: one("SELECT COUNT(*) n FROM ticket_history WHERE eventId = ? AND kind = 'returned'", id).n,
+      avgMarkupPct: (() => {
+        const r = one("SELECT AVG(markupPct) a, COUNT(*) n FROM listings WHERE eventId = ? AND status = 'sold'", id)
+        return r.n ? Math.round(r.a * 10) / 10 : null
+      })(),
       invalidListings: one("SELECT COUNT(*) n FROM tickets WHERE eventId = ? AND status = 'listed' AND listingInvalid IS NOT NULL", id).n,
       resold: activity('resold'),
       returned: activity('returned'),

@@ -1,7 +1,7 @@
 // Unit tests run on Hardhat's in-process network with hre.ethers (the only place ethers is used).
 const { expect } = require('chai')
 const { ethers } = require('hardhat')
-const { loadFixture } = require('@nomicfoundation/hardhat-toolbox/network-helpers')
+const { loadFixture, time } = require('@nomicfoundation/hardhat-toolbox/network-helpers')
 
 const FACE = ethers.parseEther('0.01')
 const CAP_PCT = 10
@@ -100,11 +100,11 @@ describe('FairPass', () => {
   describe('resale', () => {
     it('reverts a listing over the cap', async () => {
       const { fp, fan } = await loadFixture(deployFixture)
-      await expect(fp.connect(fan).listForResale(1, MAX_RESALE + 1n)).to.be.revertedWithCustomError(
+      await expect(fp.connect(fan).listForResale(1, MAX_RESALE + 1n, ethers.ZeroAddress)).to.be.revertedWithCustomError(
         fp,
         'PriceAboveCap',
       )
-      await expect(fp.connect(fan).listForResale(1, ethers.parseEther('3'))).to.be.revertedWithCustomError(
+      await expect(fp.connect(fan).listForResale(1, ethers.parseEther('3'), ethers.ZeroAddress)).to.be.revertedWithCustomError(
         fp,
         'PriceAboveCap',
       )
@@ -113,20 +113,20 @@ describe('FairPass', () => {
     it('allows a listing exactly at the cap', async () => {
       const { fp, fan } = await loadFixture(deployFixture)
       expect(await fp.maxResalePrice(1)).to.equal(MAX_RESALE)
-      await expect(fp.connect(fan).listForResale(1, MAX_RESALE))
+      await expect(fp.connect(fan).listForResale(1, MAX_RESALE, ethers.ZeroAddress))
         .to.emit(fp, 'TicketListed')
-        .withArgs(1, fan.address, MAX_RESALE)
+        .withArgs(1, fan.address, MAX_RESALE, ethers.ZeroAddress)
     })
 
 
     it('only the ticket owner can list', async () => {
       const { fp, stranger } = await loadFixture(deployFixture)
-      await expect(fp.connect(stranger).listForResale(1, FACE)).to.be.revertedWithCustomError(fp, 'NotTicketOwner')
+      await expect(fp.connect(stranger).listForResale(1, FACE, ethers.ZeroAddress)).to.be.revertedWithCustomError(fp, 'NotTicketOwner')
     })
 
     it('happy path: resale pays the seller and a 2% royalty to the organiser', async () => {
       const { fp, organiser, fan, buyer } = await loadFixture(deployFixture)
-      await fp.connect(fan).listForResale(1, MAX_RESALE)
+      await fp.connect(fan).listForResale(1, MAX_RESALE, ethers.ZeroAddress)
       const royalty = (MAX_RESALE * 2n) / 100n
       const tx = fp.connect(buyer).buyResale(1, { value: MAX_RESALE })
       await expect(tx).to.changeEtherBalances([fan, organiser, buyer], [MAX_RESALE - royalty, royalty, -MAX_RESALE])
@@ -138,7 +138,7 @@ describe('FairPass', () => {
     it('buyResale needs the exact price and a listing', async () => {
       const { fp, fan, buyer } = await loadFixture(deployFixture)
       await expect(fp.connect(buyer).buyResale(1, { value: FACE })).to.be.revertedWithCustomError(fp, 'NotListed')
-      await fp.connect(fan).listForResale(1, FACE)
+      await fp.connect(fan).listForResale(1, FACE, ethers.ZeroAddress)
       await expect(fp.connect(buyer).buyResale(1, { value: FACE - 1n })).to.be.revertedWithCustomError(
         fp,
         'WrongPayment',
@@ -147,7 +147,7 @@ describe('FairPass', () => {
 
     it('cancelListing removes the listing', async () => {
       const { fp, fan, buyer } = await loadFixture(deployFixture)
-      await fp.connect(fan).listForResale(1, FACE)
+      await fp.connect(fan).listForResale(1, FACE, ethers.ZeroAddress)
       await fp.connect(fan).cancelListing(1)
       await expect(fp.connect(buyer).buyResale(1, { value: FACE })).to.be.revertedWithCustomError(fp, 'NotListed')
     })
@@ -173,21 +173,21 @@ describe('FairPass', () => {
     it('cap 0 means resale only at face price', async () => {
       const { fp, fan } = await loadFixture(deployFixture)
       await fp.setResaleCap(1, 0)
-      await expect(fp.connect(fan).listForResale(1, FACE + 1n)).to.be.revertedWithCustomError(fp, 'PriceAboveCap')
-      await expect(fp.connect(fan).listForResale(1, FACE)).to.emit(fp, 'TicketListed')
+      await expect(fp.connect(fan).listForResale(1, FACE + 1n, ethers.ZeroAddress)).to.be.revertedWithCustomError(fp, 'PriceAboveCap')
+      await expect(fp.connect(fan).listForResale(1, FACE, ethers.ZeroAddress)).to.emit(fp, 'TicketListed')
     })
 
     it('raising the cap allows a higher listing', async () => {
       const { fp, fan } = await loadFixture(deployFixture)
       const at15 = (FACE * 115n) / 100n
-      await expect(fp.connect(fan).listForResale(1, at15)).to.be.revertedWithCustomError(fp, 'PriceAboveCap')
+      await expect(fp.connect(fan).listForResale(1, at15, ethers.ZeroAddress)).to.be.revertedWithCustomError(fp, 'PriceAboveCap')
       await fp.setResaleCap(1, 15)
-      await expect(fp.connect(fan).listForResale(1, at15)).to.emit(fp, 'TicketListed')
+      await expect(fp.connect(fan).listForResale(1, at15, ethers.ZeroAddress)).to.emit(fp, 'TicketListed')
     })
 
     it('lowering the cap blocks buying an existing listing above the new cap; raising it again unblocks it', async () => {
       const { fp, fan, buyer } = await loadFixture(deployFixture)
-      await fp.connect(fan).listForResale(1, MAX_RESALE) // +10%, valid when listed
+      await fp.connect(fan).listForResale(1, MAX_RESALE, ethers.ZeroAddress) // +10%, valid when listed
       await fp.setResaleCap(1, 5)
       await expect(fp.connect(buyer).buyResale(1, { value: MAX_RESALE }))
         .to.be.revertedWithCustomError(fp, 'PriceAboveCap')
@@ -199,10 +199,117 @@ describe('FairPass', () => {
     })
   })
 
+  describe('public and private resale', () => {
+    it('public listing: anyone can buy at the listed price', async () => {
+      const { fp, fan, buyer } = await loadFixture(deployFixture)
+      await fp.connect(fan).listForResale(1, MAX_RESALE, ethers.ZeroAddress)
+      await fp.connect(buyer).buyResale(1, { value: MAX_RESALE })
+      expect(await fp.ownerOf(1)).to.equal(buyer.address)
+    })
+
+    it('private listing: only the chosen buyer can buy; the seller is paid minus 2%', async () => {
+      const { fp, fan, buyer, stranger } = await loadFixture(deployFixture)
+      await expect(fp.connect(fan).listForResale(1, FACE, buyer.address))
+        .to.emit(fp, 'TicketListed')
+        .withArgs(1, fan.address, FACE, buyer.address)
+      await expect(fp.connect(stranger).buyResale(1, { value: FACE })).to.be.revertedWithCustomError(fp, 'NotAllowedBuyer')
+      const tx = fp.connect(buyer).buyResale(1, { value: FACE })
+      await expect(tx).to.changeEtherBalance(fan, FACE - (FACE * 2n) / 100n)
+      expect(await fp.ownerOf(1)).to.equal(buyer.address)
+      expect(await fp.allowedBuyer(1)).to.equal(ethers.ZeroAddress) // cleared on sale
+    })
+
+    it('over-cap listing fails for public and private listings', async () => {
+      const { fp, fan, buyer } = await loadFixture(deployFixture)
+      await expect(fp.connect(fan).listForResale(1, MAX_RESALE + 1n, ethers.ZeroAddress)).to.be.revertedWithCustomError(fp, 'PriceAboveCap')
+      await expect(fp.connect(fan).listForResale(1, MAX_RESALE + 1n, buyer.address)).to.be.revertedWithCustomError(fp, 'PriceAboveCap')
+    })
+
+    it('buying a private listing after the cap was lowered fails', async () => {
+      const { fp, fan, buyer } = await loadFixture(deployFixture)
+      await fp.connect(fan).listForResale(1, MAX_RESALE, buyer.address)
+      await fp.setResaleCap(1, 0)
+      await expect(fp.connect(buyer).buyResale(1, { value: MAX_RESALE })).to.be.revertedWithCustomError(fp, 'PriceAboveCap')
+    })
+
+    it('a seller cannot make a private listing for themselves', async () => {
+      const { fp, fan } = await loadFixture(deployFixture)
+      await expect(fp.connect(fan).listForResale(1, FACE, fan.address)).to.be.revertedWithCustomError(fp, 'InvalidAddress')
+    })
+
+    it('cancelling clears the price and the allowed buyer (ListingCancelled)', async () => {
+      const { fp, fan, buyer } = await loadFixture(deployFixture)
+      await fp.connect(fan).listForResale(1, FACE, buyer.address)
+      await expect(fp.connect(fan).cancelListing(1)).to.emit(fp, 'ListingCancelled').withArgs(1)
+      expect(await fp.listedPrice(1)).to.equal(0n)
+      expect(await fp.allowedBuyer(1)).to.equal(ethers.ZeroAddress)
+    })
+  })
+
+  describe('gifts', () => {
+    it('gift happy path: free transfer, TicketGifted, marked gifted', async () => {
+      const { fp, fan, buyer } = await loadFixture(deployFixture)
+      await expect(fp.connect(fan).giftTicket(1, buyer.address)).to.emit(fp, 'TicketGifted').withArgs(1, fan.address, buyer.address)
+      expect(await fp.ownerOf(1)).to.equal(buyer.address)
+      expect(await fp.gifted(1)).to.equal(true)
+    })
+
+    it('a second gift of the same ticket fails', async () => {
+      const { fp, fan, buyer, stranger } = await loadFixture(deployFixture)
+      await fp.connect(fan).giftTicket(1, buyer.address)
+      await expect(fp.connect(buyer).giftTicket(1, stranger.address)).to.be.revertedWithCustomError(fp, 'AlreadyGifted')
+    })
+
+    it('gifting to yourself or to nobody fails; only the owner can gift', async () => {
+      const { fp, fan, buyer } = await loadFixture(deployFixture)
+      await expect(fp.connect(fan).giftTicket(1, fan.address)).to.be.revertedWithCustomError(fp, 'InvalidAddress')
+      await expect(fp.connect(fan).giftTicket(1, ethers.ZeroAddress)).to.be.revertedWithCustomError(fp, 'InvalidAddress')
+      await expect(fp.connect(buyer).giftTicket(1, buyer.address)).to.be.revertedWithCustomError(fp, 'NotTicketOwner')
+    })
+
+    it('a listed or used ticket cannot be gifted', async () => {
+      const { fp, fan, buyer, staff } = await loadFixture(deployFixture)
+      await fp.connect(fan).listForResale(1, FACE, ethers.ZeroAddress)
+      await expect(fp.connect(fan).giftTicket(1, buyer.address)).to.be.revertedWithCustomError(fp, 'TicketIsListed')
+      await fp.connect(staff).markUsed(2)
+      await expect(fp.connect(fan).giftTicket(2, buyer.address)).to.be.revertedWithCustomError(fp, 'TicketAlreadyUsed')
+    })
+
+    it('a gifted ticket can still be returned to the pool (only gifting is once)', async () => {
+      const { fp, organiser, fan, buyer } = await loadFixture(deployFixture)
+      await fp.connect(fan).giftTicket(1, buyer.address)
+      await fp.connect(buyer).returnToPool(1)
+      expect(await fp.ownerOf(1)).to.equal(organiser.address)
+    })
+  })
+
+  describe('24 h transfer lock', () => {
+    it('gifts, listings and purchases fail inside the last 24 h; return and cancel still work', async () => {
+      const { fp, organiser, fan, buyer } = await loadFixture(deployFixture)
+      await fp.connect(fan).listForResale(1, FACE, ethers.ZeroAddress) // listed before the lock
+      const event = await fp.events(1)
+      await time.increaseTo(event.date - 23n * 3600n) // 23 h before the show
+      await expect(fp.connect(buyer).buyResale(1, { value: FACE })).to.be.revertedWithCustomError(fp, 'TransfersLocked')
+      await expect(fp.connect(fan).giftTicket(2, buyer.address)).to.be.revertedWithCustomError(fp, 'TransfersLocked')
+      await expect(fp.connect(fan).listForResale(2, FACE, ethers.ZeroAddress)).to.be.revertedWithCustomError(fp, 'TransfersLocked')
+      await fp.connect(fan).cancelListing(1)
+      await fp.connect(fan).returnToPool(2)
+      expect(await fp.ownerOf(2)).to.equal(organiser.address)
+    })
+
+    it('just outside the lock (25 h before) transfers still work', async () => {
+      const { fp, fan, buyer } = await loadFixture(deployFixture)
+      const event = await fp.events(1)
+      await time.increaseTo(event.date - 25n * 3600n)
+      await fp.connect(fan).giftTicket(1, buyer.address)
+      expect(await fp.ownerOf(1)).to.equal(buyer.address)
+    })
+  })
+
   describe('return to pool', () => {
     it('return to pool + reassign moves the ticket to the waitlisted fan', async () => {
       const { fp, organiser, fan, waitlisted } = await loadFixture(deployFixture)
-      await fp.connect(fan).listForResale(1, FACE)
+      await fp.connect(fan).listForResale(1, FACE, ethers.ZeroAddress)
       await expect(fp.connect(fan).returnToPool(1)).to.emit(fp, 'TicketReturned').withArgs(1, fan.address)
       expect(await fp.ownerOf(1)).to.equal(organiser.address)
       expect(await fp.listedPrice(1)).to.equal(0n) // listing cleared on transfer
@@ -241,10 +348,18 @@ describe('FairPass', () => {
       await expect(fp.connect(staff).markUsed(999)).to.be.revertedWithCustomError(fp, 'ERC721NonexistentToken')
     })
 
+    it('a listed ticket cannot be checked in until the listing is cancelled', async () => {
+      const { fp, fan, staff } = await loadFixture(deployFixture)
+      await fp.connect(fan).listForResale(1, FACE, ethers.ZeroAddress)
+      await expect(fp.connect(staff).markUsed(1)).to.be.revertedWithCustomError(fp, 'TicketIsListed')
+      await fp.connect(fan).cancelListing(1)
+      await expect(fp.connect(staff).markUsed(1)).to.emit(fp, 'TicketUsed')
+    })
+
     it('a used ticket cannot be listed or returned', async () => {
       const { fp, fan, staff } = await loadFixture(deployFixture)
       await fp.connect(staff).markUsed(1)
-      await expect(fp.connect(fan).listForResale(1, FACE)).to.be.revertedWithCustomError(fp, 'TicketAlreadyUsed')
+      await expect(fp.connect(fan).listForResale(1, FACE, ethers.ZeroAddress)).to.be.revertedWithCustomError(fp, 'TicketAlreadyUsed')
       await expect(fp.connect(fan).returnToPool(1)).to.be.revertedWithCustomError(fp, 'TicketAlreadyUsed')
     })
   })

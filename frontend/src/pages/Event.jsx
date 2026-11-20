@@ -1,5 +1,6 @@
 // Event page (/events/:eventId): poster, price, lottery countdown, "how this sale is fair" (live resale cap), enter button.
-import { Link, useParams } from 'react-router'
+import { Link, useParams, useSearchParams } from 'react-router'
+import Marketplace from '../components/Marketplace.jsx'
 import { useSession } from '../lib/session.jsx'
 import { dateLong, inr } from '../lib/format.js'
 import { useLiveEvent } from '../lib/liveEvent.js'
@@ -35,6 +36,9 @@ const ENTRY_TEXT = { entered: "You're in the draw", won: 'You won', partial: 'Yo
 export default function EventPage() {
   const { user } = useSession()
   const { eventId } = useParams()
+  const [params, setParams] = useSearchParams()
+  const tab = params.get('tab') === 'resale' ? 'resale' : 'details'
+  const setTab = (t) => setParams(t === 'resale' ? { tab: 'resale' } : {}, { replace: true })
   const { event, myEntry, error } = useLiveEvent(Number(eventId) || null, { withEntry: !!user })
 
   if (error) return <ErrorNote error={error} />
@@ -67,6 +71,28 @@ export default function EventPage() {
         <I.ArrowLeft size={16} /> All events
       </Link>
       <Poster event={event} />
+
+      <div className="grid grid-cols-2 gap-1 rounded-[16px] bg-card p-1" role="tablist" aria-label="Event sections">
+        {[
+          ['details', 'Details'],
+          ['resale', 'Resale'],
+        ].map(([id, label]) => (
+          <button
+            key={id}
+            role="tab"
+            aria-selected={tab === id}
+            onClick={() => setTab(id)}
+            className={`min-h-11 rounded-[12px] font-semibold ${tab === id ? 'bg-raised text-ink' : 'text-muted'}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'resale' ? (
+        <Marketplace eventId={event.id} />
+      ) : (
+      <>
 
       <div className="grid grid-cols-2 gap-3">
         <Card className="p-4">
@@ -155,6 +181,8 @@ export default function EventPage() {
           FairPass contract on Quaiscan
         </TxLink>
       </Card>
+      </>
+      )}
     </div>
   )
 }

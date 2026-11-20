@@ -1,7 +1,8 @@
 // Minting tickets with random seats, and reading them back.
 import crypto from 'node:crypto'
-import { db, logActivity } from '../db.js'
+import { db, logActivity, logHistory } from '../db.js'
 import * as quai from './quai.js'
+import { faceInr, faceWei } from './money.js'
 
 const BLOCKS = ['A', 'B', 'C', 'D', 'E', 'F']
 const MINT_BATCH = 50 // tickets per transaction (the contract allows up to 100)
@@ -29,6 +30,7 @@ export async function mintToUser(event, user, quantity = 1) {
       for (const tokenId of tokenIds) {
         insert.run(tokenId, event.id, user.id, assignSeat(event.id), hash)
         logActivity({ eventId: event.id, kind: 'minted', tokenId, userId: user.id, txHash: hash })
+        logHistory({ tokenId, eventId: event.id, kind: 'minted', toUserId: user.id, priceWei: faceWei(event), priceInr: faceInr(event), txHash: hash })
       }
     })()
     tickets.push(...tokenIds.map(getTicket))

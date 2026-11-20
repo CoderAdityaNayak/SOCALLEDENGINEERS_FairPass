@@ -6,7 +6,8 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 /// @title FairPass - concert tickets as NFTs that can only move through this contract.
-/// @notice Fair resale (price cap), return-to-pool, and one-time gate check-in.
+/// @notice Fair resale (organiser-set price cap, public or private listings), one-time gifts, return-to-pool,
+///         a transfer lock 24 h before the event, and one-time gate check-in.
 ///         Only the contract owner (the organiser) mints. Plain transfers and approvals are disabled.
 contract FairPass is ERC721, Ownable, ReentrancyGuard {
     struct Event {
@@ -22,6 +23,7 @@ contract FairPass is ERC721, Ownable, ReentrancyGuard {
     uint256 public constant ROYALTY_PCT = 2;
     uint8 public constant MAX_RESALE_CAP_PCT = 100;
     uint32 public constant MAX_MINT_BATCH = 100;
+    uint256 public constant TRANSFER_LOCK = 24 hours; // no gifts, listings or purchases this close to the event
 
     uint256 public nextEventId = 1;
     uint256 public nextTokenId = 1;
@@ -30,6 +32,8 @@ contract FairPass is ERC721, Ownable, ReentrancyGuard {
     mapping(uint256 => uint256) public ticketEvent; // tokenId => eventId
     mapping(uint256 => bool) public used; // tokenId => checked in at the gate
     mapping(uint256 => uint256) public listedPrice; // tokenId => resale price (0 = not listed)
+    mapping(uint256 => address) public allowedBuyer; // tokenId => only buyer of a private listing (0 = public)
+    mapping(uint256 => bool) public gifted; // tokenId => already gifted once
     mapping(address => bool) public gateStaff;
 
     /// @dev True only while one of the allowed transfer paths is running.
@@ -38,8 +42,9 @@ contract FairPass is ERC721, Ownable, ReentrancyGuard {
     event EventCreated(uint256 indexed eventId, string name, uint256 date, uint256 facePrice, uint32 maxSupply, uint8 resaleCapPct);
     event TicketMinted(uint256 indexed tokenId, uint256 indexed eventId, address indexed to);
     event ResaleCapChanged(uint256 indexed eventId, uint8 oldPct, uint8 newPct);
-    event TicketListed(uint256 indexed tokenId, address indexed seller, uint256 price);
-    event TicketListingCancelled(uint256 indexed tokenId);
+    event TicketListed(uint256 indexed tokenId, address indexed seller, uint256 price, address allowedBuyer);
+    event ListingCancelled(uint256 indexed tokenId);
+    event TicketGifted(uint256 indexed tokenId, address indexed from, address indexed to);
     event TicketResold(uint256 indexed tokenId, address indexed seller, address indexed buyer, uint256 price, uint256 royalty);
     event TicketReturned(uint256 indexed tokenId, address indexed from);
     event TicketReassigned(uint256 indexed tokenId, address indexed to);
@@ -62,6 +67,10 @@ contract FairPass is ERC721, Ownable, ReentrancyGuard {
     error NotInPool();
     error InvalidAddress();
     error PaymentFailed();
+    error TransfersLocked();
+    error NotAllowedBuyer();
+    error AlreadyGifted();
+    error TicketIsListed();
 
     modifier onlyGateStaff() {
         if (!gateStaff[msg.sender]) revert NotGateStaff();
@@ -78,6 +87,12 @@ contract FairPass is ERC721, Ownable, ReentrancyGuard {
         _transferAllowed = true;
         _;
         _transferAllowed = false;
+    }
+
+    /// @dev No gifts, listings or purchases within TRANSFER_LOCK of the event date.
+    modifier notLocked(uint256 tokenId) {
+        if (block.timestamp + TRANSFER_LOCK >= events[ticketEvent[tokenId]].date) revert TransfersLocked();
+        _;
     }
 
     constructor(string memory name_, string memory symbol_) ERC721(name_, symbol_) Ownable(msg.sender) {}
@@ -162,26 +177,32 @@ contract FairPass is ERC721, Ownable, ReentrancyGuard {
         return (e.facePrice * (100 + uint256(e.resaleCapPct))) / 100;
     }
 
-    function listForResale(uint256 tokenId, uint256 price) external onlyTicketOwner(tokenId) {
+    /// @notice List a ticket for resale at most face + cap. `buyer` = zero address: public listing; otherwise a
+    ///         private listing only that address can buy.
+    function listForResale(uint256 tokenId, uint256 price, address buyer) external onlyTicketOwner(tokenId) notLocked(tokenId) {
         if (used[tokenId]) revert TicketAlreadyUsed();
         if (price == 0) revert InvalidPrice();
+        if (buyer == msg.sender) revert InvalidAddress();
         uint256 cap = maxResalePrice(tokenId);
         if (price > cap) revert PriceAboveCap(price, cap);
         listedPrice[tokenId] = price;
-        emit TicketListed(tokenId, msg.sender, price);
+        allowedBuyer[tokenId] = buyer;
+        emit TicketListed(tokenId, msg.sender, price, buyer);
     }
 
     function cancelListing(uint256 tokenId) external onlyTicketOwner(tokenId) {
         if (listedPrice[tokenId] == 0) revert NotListed();
-        delete listedPrice[tokenId];
-        emit TicketListingCancelled(tokenId);
+        _clearListing(tokenId);
+        emit ListingCancelled(tokenId);
     }
 
     /// @notice Buy a listed ticket at exactly its listed price. The seller gets the price minus a 2% organiser royalty.
     ///         The price is re-checked against the CURRENT cap, so lowering the cap blocks listings above it.
-    function buyResale(uint256 tokenId) external payable nonReentrant allowTransfer {
+    function buyResale(uint256 tokenId) external payable nonReentrant notLocked(tokenId) allowTransfer {
         uint256 price = listedPrice[tokenId];
         if (price == 0) revert NotListed();
+        address only = allowedBuyer[tokenId];
+        if (only != address(0) && only != msg.sender) revert NotAllowedBuyer();
         if (msg.value != price) revert WrongPayment(msg.value, price);
         if (used[tokenId]) revert TicketAlreadyUsed();
         uint256 cap = maxResalePrice(tokenId);
@@ -199,6 +220,17 @@ contract FairPass is ERC721, Ownable, ReentrancyGuard {
         _pay(organiser, royalty);
     }
 
+    /// @notice Gift the ticket for free to someone else. Each ticket can be gifted only once, and not while listed.
+    function giftTicket(uint256 tokenId, address to) external onlyTicketOwner(tokenId) notLocked(tokenId) allowTransfer {
+        if (used[tokenId]) revert TicketAlreadyUsed();
+        if (listedPrice[tokenId] != 0) revert TicketIsListed();
+        if (gifted[tokenId]) revert AlreadyGifted();
+        if (to == address(0) || to == msg.sender) revert InvalidAddress();
+        gifted[tokenId] = true;
+        _transfer(msg.sender, to, tokenId);
+        emit TicketGifted(tokenId, msg.sender, to);
+    }
+
     /// @notice Give the ticket back to the organiser's pool. The face-price refund is handled off-chain (mocked).
     function returnToPool(uint256 tokenId) external onlyTicketOwner(tokenId) allowTransfer {
         if (used[tokenId]) revert TicketAlreadyUsed();
@@ -212,8 +244,8 @@ contract FairPass is ERC721, Ownable, ReentrancyGuard {
     function markUsed(uint256 tokenId) external onlyGateStaff {
         _requireOwned(tokenId); // reverts for tokens that were never minted
         if (used[tokenId]) revert TicketAlreadyUsed();
+        if (listedPrice[tokenId] != 0) revert TicketIsListed(); // cancel the listing before entering
         used[tokenId] = true;
-        delete listedPrice[tokenId];
         emit TicketUsed(tokenId, msg.sender);
     }
 
@@ -224,12 +256,18 @@ contract FairPass is ERC721, Ownable, ReentrancyGuard {
 
     // ------------------------------------------------------------------ transfer lock
 
-    /// @dev OZ v5 hook for every mint/transfer/burn. Only mints and the allowed paths above may move tokens.
+    /// @dev OZ v5 hook for every mint/transfer/burn. Only mint, buyResale, giftTicket, returnToPool and reassign
+    ///      may move tokens (they set _transferAllowed); everything else reverts.
     function _update(address to, uint256 tokenId, address auth) internal override returns (address) {
         address from = _ownerOf(tokenId);
         if (from != address(0) && !_transferAllowed) revert TransfersDisabled();
-        if (from != address(0)) delete listedPrice[tokenId];
+        if (from != address(0)) _clearListing(tokenId);
         return super._update(to, tokenId, auth);
+    }
+
+    function _clearListing(uint256 tokenId) private {
+        delete listedPrice[tokenId];
+        delete allowedBuyer[tokenId];
     }
 
     function approve(address, uint256) public pure override {

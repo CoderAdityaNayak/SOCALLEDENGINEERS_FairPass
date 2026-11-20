@@ -1,9 +1,10 @@
 // App shell: top bar (logo, Pelagus, account) and a role-based bottom navigation.
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router'
 import { useSession } from '../lib/session.jsx'
 import { connectPelagus } from '../lib/pelagus.js'
-import { shortAddr } from '../lib/format.js'
+import { inr, shortAddr } from '../lib/format.js'
+import { api } from '../lib/api.js'
 import * as I from './Icons.jsx'
 
 export function Logo() {
@@ -49,6 +50,36 @@ function PelagusButton() {
   )
 }
 
+/** The fan's custodial wallet balance (pays for resale purchases). */
+function WalletChip({ user }) {
+  const [w, setW] = useState(null)
+  useEffect(() => {
+    if (!user) return
+    let alive = true
+    const load = () => api('/me/wallet').then((r) => alive && setW(r)).catch(() => {})
+    load()
+    const t = setInterval(load, 30000)
+    return () => {
+      alive = false
+      clearInterval(t)
+    }
+  }, [user])
+  if (!w) return null
+  return (
+    <a
+      href={w.explorer}
+      target="_blank"
+      rel="noreferrer"
+      className="hidden min-h-10 items-center gap-2 rounded-[12px] border border-line px-3 text-sm text-ink hover:border-muted sm:inline-flex"
+      title={`${w.balance} QUAI in your FairPass wallet ${w.address}`}
+    >
+      <I.Wallet size={16} className="text-lime" />
+      <span className="tabular-nums">{inr(w.balanceInr)}</span>
+      <span className="sr-only">wallet balance, {w.balance} QUAI (opens Quaiscan)</span>
+    </a>
+  )
+}
+
 const NAV = {
   fan: [
     { to: '/', label: 'Events', icon: I.Home, end: true },
@@ -90,6 +121,7 @@ export function Layout() {
           </nav>
           <div className="flex items-center gap-2">
             <PelagusButton />
+            {user && <WalletChip user={user} />}
             {user ? (
               <button
                 onClick={() => {
@@ -98,7 +130,7 @@ export function Layout() {
                 }}
                 className="grid size-10 place-items-center rounded-[12px] border border-line text-muted hover:text-ink"
                 aria-label={`Sign out ${user.name || user.phone}`}
-                title={`Signed in as ${user.name || user.phone} (${user.role})`}
+                title={`Signed in as ${user.name || user.phone} (${user.role}). Sign out`}
               >
                 <I.Logout size={18} />
               </button>

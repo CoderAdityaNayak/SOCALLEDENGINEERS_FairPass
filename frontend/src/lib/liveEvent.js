@@ -91,5 +91,35 @@ export function useLiveEvent(eventId, { withEntry = false } = {}) {
   return state
 }
 
+/**
+ * A counter that goes up whenever this event's listings change in Firestore (fairpass/live/listings), so a page
+ * can re-fetch the marketplace live. Without Firebase it ticks every 10 s instead.
+ */
+export function useListingsTick(eventId) {
+  const [tick, setTick] = useState(0)
+  useEffect(() => {
+    if (!eventId) return
+    let unsubscribe = () => {}
+    let timer
+    let alive = true
+    const poll = () => (timer ||= setInterval(() => setTick((t) => t + 1), 10000))
+    if (firebaseEnabled) {
+      firestore()
+        .then(({ db, fs }) => {
+          if (!alive) return
+          const q = fs.query(fs.collection(db, 'fairpass', 'live', 'listings'), fs.where('eventId', '==', Number(eventId)))
+          unsubscribe = fs.onSnapshot(q, () => alive && setTick((t) => t + 1), poll)
+        })
+        .catch(poll)
+    } else poll()
+    return () => {
+      alive = false
+      unsubscribe()
+      clearInterval(timer)
+    }
+  }, [eventId])
+  return tick
+}
+
 /** Max resale for a face price and markup, rounded down to the paisa (the backend has the exact value). */
 export const previewMaxInr = (faceInr, pct) => Math.floor(Number(faceInr) * (100 + Number(pct))) / 100

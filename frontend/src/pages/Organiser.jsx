@@ -543,6 +543,15 @@ export default function Organiser() {
             </Card>
           )}
 
+          <section className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6" aria-label="Resale and gifts">
+            <Stat label="Listed now" value={num(stats.tickets.listedPublic + stats.tickets.listedPrivate)} icon={I.Tag} sub={`${num(stats.tickets.listedPrivate)} private`} />
+            <Stat label="Sold publicly" value={num(stats.tickets.soldPublic)} icon={I.Users} />
+            <Stat label="Sold privately" value={num(stats.tickets.soldPrivate)} icon={I.Link} />
+            <Stat label="Gifted" value={num(stats.tickets.gifted)} icon={I.Check} />
+            <Stat label="Returned to pool" value={num(stats.tickets.returnedToPool)} icon={I.Undo} />
+            <Stat label="Avg markup" value={stats.tickets.avgMarkupPct == null ? '–' : `+${stats.tickets.avgMarkupPct}%`} icon={I.Percent} sub="on completed sales" />
+          </section>
+
           <section id="stats" className="grid grid-cols-2 gap-3 xl:grid-cols-4" aria-label="Key numbers">
             <Stat label="Verified entries" value={num(stats.entries.total)} icon={I.Users} sub={`${num(stats.entries.ticketsRequested)} tickets requested`} />
             <Stat label="Bot attempts blocked" value={num(stats.blockedTotal)} tone="err" icon={I.Bot} sub={`${num(stats.pow.solved)} / ${num(stats.pow.issued)} puzzles solved`} />

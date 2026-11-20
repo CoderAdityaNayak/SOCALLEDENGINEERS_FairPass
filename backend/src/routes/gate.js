@@ -31,6 +31,7 @@ function parseQr(raw) {
  *   NOT_ON_CHAIN  token was never minted by the FairPass contract (a fake ticket)
  *   NOT_OWNER     the QR was not signed by the wallet that owns the token on-chain
  *   ALREADY_USED  the ticket was already checked in
+ *   LISTED        the ticket is listed for resale (the owner must cancel the listing first)
  *   VALID         all checks passed -> markUsed on-chain
  * Every check is reported so the scanner can show a pass/fail table.
  */
@@ -70,7 +71,11 @@ router.post('/gate/verify', requireRole('staff', 'organiser'), async (req, res) 
   const unused = !usedOnChain && ticket?.status !== 'used'
   check('unused', 'Not used yet', owner ? unused : null, owner ? (unused ? 'first scan' : 'already checked in') : 'skipped')
 
-  const result = !fresh ? 'EXPIRED' : !owner ? 'NOT_ON_CHAIN' : !isOwner ? 'NOT_OWNER' : !unused ? 'ALREADY_USED' : 'VALID'
+  // 5. Not listed for resale (the contract refuses to check in a listed ticket)
+  const listed = owner ? (await quai.listedPrice(qr.tokenId)) > 0n : false
+  check('notListed', 'Not listed for resale', owner ? !listed : null, owner ? (listed ? 'cancel the listing first' : 'not listed') : 'skipped')
+
+  const result = !fresh ? 'EXPIRED' : !owner ? 'NOT_ON_CHAIN' : !isOwner ? 'NOT_OWNER' : !unused ? 'ALREADY_USED' : listed ? 'LISTED' : 'VALID'
   const holder = ticket?.ownerUserId ? getUser(ticket.ownerUserId) : null
   const base = {
     result,
