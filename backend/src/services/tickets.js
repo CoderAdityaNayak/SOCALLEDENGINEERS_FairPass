@@ -32,8 +32,8 @@ export async function mintToUser(event, user, { corporate = false } = {}) {
 
 export const getTicket = (tokenId) => db.prepare('SELECT * FROM tickets WHERE tokenId = ?').get(tokenId)
 
-/** "B-12-7" -> { block: 'B', row: 12, seat: 7 } */
+/** "B-12-7" -> { block: 'B', row: 12, seatNumber: 7 } */
 export function splitSeat(seat) {
   const [block, row, number] = String(seat).split('-')
-  return { block, row: Number(row), seat: Number(number) }
+  return { block, row: Number(row), seatNumber: Number(number) }
 }

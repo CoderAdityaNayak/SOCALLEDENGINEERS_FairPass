@@ -112,12 +112,19 @@ function broadcast(wallet, sendFn) {
   })
 }
 
-/** Sends a contract call from `wallet`, waits for it to be mined, returns { hash, receipt, events }. */
-async function send(wallet, action, method, args, overrides = {}) {
-  let tx
+/** Broadcasts a contract call from `wallet` (gas estimation catches reverts here). Returns the tx. */
+async function submit(wallet, action, method, args, overrides = {}) {
   try {
     const c = contract.connect(wallet)
-    tx = await broadcast(wallet, (nonce) => c[method](...args, { ...overrides, nonce }))
+    return await broadcast(wallet, (nonce) => c[method](...args, { ...overrides, nonce }))
+  } catch (err) {
+    throw new ChainError(err, action)
+  }
+}
+
+/** Waits for a tx to be mined; returns { hash, receipt, events }. */
+async function confirm(tx, action) {
+  try {
     const receipt = await tx.wait()
     const events = []
     for (const log of receipt.logs || []) {
@@ -130,6 +137,11 @@ async function send(wallet, action, method, args, overrides = {}) {
   } catch (err) {
     throw new ChainError(err, action)
   }
+}
+
+/** Sends a contract call from `wallet`, waits for it to be mined, returns { hash, receipt, events }. */
+async function send(wallet, action, method, args, overrides = {}) {
+  return confirm(await submit(wallet, action, method, args, overrides), action)
 }
 
 // ------------------------------------------------------------------ gas sponsoring (mocked fiat)
@@ -181,6 +193,12 @@ export async function mintTicket(to, chainEventId, corporate = false) {
 
 export async function markUsed(tokenId) {
   return send(organiser, 'markUsed', 'markUsed', [tokenId])
+}
+
+/** For the gate: returns as soon as markUsed is broadcast; `confirmed` resolves when it is mined. */
+export async function markUsedFast(tokenId) {
+  const tx = await submit(organiser, 'markUsed', 'markUsed', [tokenId])
+  return { hash: tx.hash, confirmed: confirm(tx, 'markUsed') }
 }
 
 export async function reassign(tokenId, to) {

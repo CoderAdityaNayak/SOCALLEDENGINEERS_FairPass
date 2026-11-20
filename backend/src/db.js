@@ -88,6 +88,7 @@ CREATE TABLE IF NOT EXISTS corporate_seats (
   tokenId   INTEGER,
   swapsLeft INTEGER NOT NULL DEFAULT 2,
   verified  INTEGER NOT NULL DEFAULT 0,
+  note      TEXT,                            -- e.g. "minting", "ID already has a ticket for this event"
   createdAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
