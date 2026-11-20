@@ -1,20 +1,13 @@
-// Skeleton only. Feature routes (lottery, resale, gate, corporate) come later.
-import 'dotenv/config'
-import express from 'express'
-import cors from 'cors'
+// FairPass backend entry point.
+import { config } from './config.js'
+import { createApp } from './app.js'
+import { ensureOrganiser } from './services/users.js'
+import { organiser, explorerAddress } from './services/quai.js'
 
-const app = express()
-app.use(express.json())
-app.use(
-  cors({
-    origin: process.env.FRONTEND_ORIGIN || 'http://localhost:5173',
-    // x402 Work uses these headers; the browser must be allowed to send/read them.
-    allowedHeaders: ['content-type', 'payment-signature'],
-    exposedHeaders: ['payment-required', 'payment-response'],
-  }),
-)
-
-app.get('/health', (_req, res) => res.json({ ok: true }))
-
-const port = Number(process.env.PORT || 8080)
-app.listen(port, () => console.log(`backend listening on http://localhost:${port}`))
+const org = ensureOrganiser()
+createApp().listen(config.port, () => {
+  console.log(`FairPass backend on http://localhost:${config.port}`)
+  console.log(`  contract  ${explorerAddress(config.contract.address)}`)
+  console.log(`  organiser ${organiser.address} (login phone ${org.phone})`)
+  if (config.demoMode) console.log('  DEMO_MODE on: OTPs are returned in API responses')
+})
