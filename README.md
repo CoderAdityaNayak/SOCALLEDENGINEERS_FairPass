@@ -1,10 +1,11 @@
 # FairPass
 
-**Fair concert tickets on Quai Network.** A random draw instead of a queue, resale capped at face price + 10%,
-and a rotating QR that only the real on-chain owner can produce, so a fake or screenshotted ticket is useless at the gate.
+**Fair concert tickets on Quai Network.** A random draw instead of a queue, fair ways to pass a ticket on (return,
+gift once, or resell privately or publicly under an organiser-set cap), and a rotating QR that only the real on-chain
+owner can produce, so a fake or screenshotted ticket is useless at the gate.
 
 > Hackathon track: Cybersecurity & Blockchain · Problem B2 "Fair tickets"
-> Contract (Quai Orchard testnet, Cyprus-1): [`0x002cb29004b6A97790464e2411173C6204f1A869`](https://orchard.quaiscan.io/address/0x002cb29004b6A97790464e2411173C6204f1A869)
+> Contract (Quai Orchard testnet, Cyprus-1): [`0x0019897D203A86A9B33298B03468Acc15ABd789B`](https://orchard.quaiscan.io/address/0x0019897D203A86A9B33298B03468Acc15ABd789B)
 
 ---
 
@@ -24,6 +25,7 @@ and **a ticket was just an image** (so fakes and screenshots work).
 |---|---|
 | **1. Fair entry** | A **lottery**, not a race. **One entry per verified person per event**; the fan chooses how many tickets they want. Every entry must carry an **x402 Work proof-of-work** (about a second of hashing for a fan, a million times that for a bot farm sending a million entries, which would also need a million real IDs) and passes a per-IP rate limit. The draw is **commit-reveal**: `sha256(seed)` is public before anyone enters, the seed is revealed at the draw, and anyone can recompute the order. In that order each winner gets the quantity they asked for; when tickets run out, that fan gets what's left and waits for the rest. |
 | **2. Fair resale** | Tickets are **ERC-721 NFTs that can only move through the FairPass contract** (plain transfers and approvals revert). Resale price ≤ `face × (100 + cap) / 100`, enforced **on-chain**. **The organiser sets the cap per event** (0–100 %, default 10 %) with `setResaleCap`; purchases re-check the **current** cap, so lowering it makes existing over-cap listings unbuyable (their sellers are warned). **Return to pool**: the seller gets face price back and the ticket goes to the **next fan on the waitlist**. The seller can't pick the buyer, which kills cash side deals. |
+| **Pass your ticket on** | A ticket holder gets four options: **Return to pool** (recommended: face price back, ticket goes to the next waitlisted fan), **Gift to a friend** (free, once per ticket, only to a verified user, max 2 gifts per person per event), **Sell privately** (to one person by phone, via a share link; the contract only lets that wallet buy), **Sell publicly** (on the event's Resale tab; waitlisted fans get first pick for 10 minutes). Every sale is capped and paid through the contract, buyers must be verified and solve the x402 Work puzzle, and **all transfers lock 24 h before the show**. A listed ticket can't be used at the gate until the listing is cancelled. |
 | **3. Real tickets** | Only tokens minted by the contract exist. The fan's QR = `{tokenId, timestamp, signature}`, **re-signed every 30 s** by the owner's key. The gate checks **fresh (< 30 s)**, **signer == `ownerOf(tokenId)` on-chain**, **not used**, then calls **`markUsed`** on-chain. A screenshot expires; a forged QR has the wrong signer; a fake ticket isn't on-chain. |
 
 Prices are shown in ₹ (the contract works in QUAI; a fixed mock rate `INR_PER_QUAI`, default ₹4,50,000 per QUAI, converts: 0.01 QUAI = ₹4,500).
@@ -79,7 +81,7 @@ flowchart LR
 
 | Store | What | Where |
 |---|---|---|
-| **Quai Orchard** | Tickets, owners, listings, used flags, gate staff | `FairPass.sol` at the address above |
+| **Quai Orchard** | Tickets, owners, public/private listings, gifted flags, used flags, gate staff, the 24 h lock | `FairPass.sol` at the address above |
 | **SQLite** (source of truth) | Users, entries, draw, seats, listings, scans, blocked attempts | `backend/data/demo.db` (`npm run demo`) or `backend/data/fairpass.db` |
 | **Cloud Firestore** (optional mirror) | A copy of every SQLite row, updated within about a second | `fairpass/live/{table}/{id}` (always the current database; heals itself every minute) |
 
@@ -142,14 +144,18 @@ pick one, and an event they already entered shows "Already entered".
    the **anti-bot puzzle** (real x402 Work) → entry number. As organiser, **Run draw** → winners are **minted on Quai**
    (one transaction per winner; links in "On-chain activity"). "Draw proof → Verify in this browser" recomputes the
    draw from the revealed seed, including who got only part of their quantity.
-3. **Organiser-controlled resale:** in **Resale settings**, slide to **15%** → Save (on-chain, about 30 s; Quaiscan link
-   appears). As a winner (the draw proof shows who won) → ticket → *Can't go?*: "Max resale (+15%)" already shows
-   ₹5,175, updated live. Type `5300`: the field turns red, *Above the cap*. List at `5040` (+12%) instead. Back as
-   organiser, lower the cap to **5%** → the dashboard reports 1 listing invalidated; the seller's ticket now shows
-   *"invalid – above new cap"* and nobody can buy it (the contract re-checks the cap at purchase).
-4. **Return to pool:** the seller taps **Return to pool** → the next waitlisted fan receives it on-chain (shown live,
-   with Quaiscan links).
-5. **Gate:** as gate staff → *Scan*. Show a winner's live QR on another device (or use *Copy code* → *Paste code*):
+3. **Sell publicly:** as a winner (the draw proof shows who won) → ticket → **Pass it on** → *Sell publicly* → type a
+   price above the max (red, button disabled) → list at the max. Open the event's **Resale** tab: the listing is there
+   live, marked "Waitlist priority — open to all in 9:59". Log in as the **waitlisted** fan → *Buy* → puzzle →
+   "Ticket is yours". At the gate, the seller's old QR is now **REJECTED · Not the owner**, the buyer's is **VALID**.
+4. **Sell privately / gift:** *Sell privately* → enter a fan's phone (their verified name appears) and a price →
+   copy the share link → that fan opens it, sees seat + price, buys. *Gift to a friend* → phone → name → "Gift sent";
+   their ticket says "Gift from …", and gifting it again is blocked.
+5. **Organiser-controlled cap:** in **Resale settings** lower the cap → existing listings above it become *"invalid –
+   above new cap"* and can't be bought (the contract re-checks the cap at purchase). **Return to pool** → the next
+   waitlisted fan receives the ticket. The dashboard counts listed / sold publicly / privately / gifted / returned
+   and the average markup.
+6. **Gate:** as gate staff → *Scan*. Show a winner's live QR on another device (or use *Copy code* → *Paste code*):
    - a QR older than 30 s → **REJECTED · Expired QR**
    - `{"tokenId":999999,...}` → **REJECTED · Not on-chain**
    - the live QR → **VALID · Let them in** (marked used on-chain)
@@ -159,10 +165,10 @@ pick one, and an event they already entered shows "Already entered".
 
 | Command | What it does |
 |---|---|
-| `npm run test:contracts` | 25 Hardhat tests for every contract rule (incl. lowering the cap blocks an existing listing) |
+| `npm run test:contracts` | 39 Hardhat tests for every contract rule (cap, private listings, gifts once, 24 h lock, listed tickets at the gate…) |
 | `npm run test:backend` | Integration tests (real Orchard contract + x402 facilitator; sends testnet transactions) |
 | `npm test -w frontend` | Browser solver vs the published x402 worked example and the Node verifier |
-| `npm run e2e` | The full story against a running API: quantities + partial win → VALID → ALREADY_USED → NOT_ON_CHAIN → NOT_OWNER → cap 15% (over-cap rejected, +12% listed) → cap 5% (listing invalid, can't be bought) → EXPIRED → return → waiting fan |
+| `npm run e2e` | "Pass it on" end to end (run the API with `QR_MAX_AGE_SECONDS=300`): over-cap rejected → public listing with waitlist priority → waitlisted fan buys → old QR rejected, new QR valid → private sale via link → gift once, second gift blocked → cap lowered blocks a listing → 24 h lock blocks transfers |
 | `npm run bot-attack` | The 10,000-request bot farm simulation |
 | `npm run deploy` | Deploy FairPass + demo event to Orchard (needs `contracts/.env` `PRIVATE_KEY`) |
 | `npm run dev:backend` / `npm run dev:frontend` | Run each part on its own |
@@ -195,9 +201,10 @@ is just one ticket in a hat: a farm that does get in has no speed advantage, and
 exactly like 2 honest fans.
 
 **What about cash side deals ("pay me ₹50,000 on UPI and I'll transfer it")?**
-There is no "transfer to a friend" in the contract. A seller can list at most face + the organiser's cap to *anyone*, or return to the
-pool, where the ticket goes to the next person on the waitlist, not to someone the seller chooses. A buyer who paid cash
-on the side can't be guaranteed the ticket. At the gate, the QR must be signed by the on-chain owner, so lending the
+Every way a ticket can move goes through the contract and is capped: a public or private sale can't exceed face + the
+organiser's cap, and a free gift works only once per ticket and only to a verified person. So "₹50,000 on UPI, then I'll
+gift it" works at most once and only before the 24 h lock, and the buyer can't pass it on again by gift. Returning
+to the pool gives the ticket to the next person on the waitlist, not someone the seller chooses. At the gate, the QR must be signed by the on-chain owner, so lending the
 login is the only workaround, and the holder's name is shown to staff.
 
 **What if my phone dies at the gate?**

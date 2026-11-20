@@ -1,13 +1,13 @@
 {
-  "address": "0x0023c8DA6CB5Bf2122657db07B4df64edb386116",
+  "address": "0x0019897D203A86A9B33298B03468Acc15ABd789B",
   "chainId": 15000,
   "network": "orchard-cyprus1",
   "rpcUrl": "https://orchard.rpc.quai.network",
   "explorer": "https://orchard.quaiscan.io",
   "deployer": "0x001EbFd19D321Ac69CB7E7E8C1268Ea19ab94b83",
-  "deployTx": "0x00790010632bb2780095cebca41d26a6dd51b83a9fe50aaa12270a17825621b3",
+  "deployTx": "0x00330034853174df6cfc45c8ec440406bf176d6a2f991b591ec0cc13c08053d5",
   "demoEventId": 1,
-  "deployedAt": "2026-11-20T21:01:42.282Z",
+  "deployedAt": "2026-11-20T22:36:38.405Z",
   "abi": [
     {
       "inputs": [
@@ -24,6 +24,11 @@
       ],
       "stateMutability": "nonpayable",
       "type": "constructor"
+    },
+    {
+      "inputs": [],
+      "name": "AlreadyGifted",
+      "type": "error"
     },
     {
       "inputs": [],
@@ -155,6 +160,11 @@
     },
     {
       "inputs": [],
+      "name": "NotAllowedBuyer",
+      "type": "error"
+    },
+    {
+      "inputs": [],
       "name": "NotGateStaff",
       "type": "error"
     },
@@ -233,7 +243,17 @@
     },
     {
       "inputs": [],
+      "name": "TicketIsListed",
+      "type": "error"
+    },
+    {
+      "inputs": [],
       "name": "TransfersDisabled",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "TransfersLocked",
       "type": "error"
     },
     {
@@ -374,6 +394,19 @@
       "inputs": [
         {
           "indexed": true,
+          "internalType": "uint256",
+          "name": "tokenId",
+          "type": "uint256"
+        }
+      ],
+      "name": "ListingCancelled",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
           "internalType": "address",
           "name": "previousOwner",
           "type": "address"
@@ -425,17 +458,17 @@
         {
           "indexed": true,
           "internalType": "address",
-          "name": "seller",
+          "name": "from",
           "type": "address"
         },
         {
-          "indexed": false,
-          "internalType": "uint256",
-          "name": "price",
-          "type": "uint256"
+          "indexed": true,
+          "internalType": "address",
+          "name": "to",
+          "type": "address"
         }
       ],
-      "name": "TicketListed",
+      "name": "TicketGifted",
       "type": "event"
     },
     {
@@ -446,9 +479,27 @@
           "internalType": "uint256",
           "name": "tokenId",
           "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "seller",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "price",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "address",
+          "name": "allowedBuyer",
+          "type": "address"
         }
       ],
-      "name": "TicketListingCancelled",
+      "name": "TicketListed",
       "type": "event"
     },
     {
@@ -635,6 +686,19 @@
       "type": "function"
     },
     {
+      "inputs": [],
+      "name": "TRANSFER_LOCK",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
       "inputs": [
         {
           "internalType": "address",
@@ -645,6 +709,25 @@
       "name": "addGateStaff",
       "outputs": [],
       "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "name": "allowedBuyer",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
       "type": "function"
     },
     {
@@ -839,6 +922,43 @@
     {
       "inputs": [
         {
+          "internalType": "uint256",
+          "name": "tokenId",
+          "type": "uint256"
+        },
+        {
+          "internalType": "address",
+          "name": "to",
+          "type": "address"
+        }
+      ],
+      "name": "giftTicket",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "name": "gifted",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
           "internalType": "address",
           "name": "owner",
           "type": "address"
@@ -890,6 +1010,11 @@
           "internalType": "uint256",
           "name": "price",
           "type": "uint256"
+        },
+        {
+          "internalType": "address",
+          "name": "buyer",
+          "type": "address"
         }
       ],
       "name": "listForResale",

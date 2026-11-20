@@ -80,12 +80,13 @@ in ₹ and converted to wei with floor division, then checked against the exact 
 
 ### Deployed (Orchard, Cyprus-1)
 
-- FairPass v2 (resale cap, batch mint, no corporate): `0x0023c8DA6CB5Bf2122657db07B4df64edb386116` —
-  https://orchard.quaiscan.io/address/0x0023c8DA6CB5Bf2122657db07B4df64edb386116 (deploy tx
-  `0x00790010632bb2780095cebca41d26a6dd51b83a9fe50aaa12270a17825621b3`). The v1 contract
-  `0x002cb29004b6A97790464e2411173C6204f1A869` is retired; databases made for it are refused at startup.
+- FairPass v3 (gifts, private/public listings, 24 h lock): `0x0019897D203A86A9B33298B03468Acc15ABd789B` —
+  https://orchard.quaiscan.io/address/0x0019897D203A86A9B33298B03468Acc15ABd789B (deploy tx
+  `0x00330034853174df6cfc45c8ec440406bf176d6a2f991b591ec0cc13c08053d5`). Retired: v2
+  `0x0023c8DA6CB5Bf2122657db07B4df64edb386116`, v1 `0x002cb29004b6A97790464e2411173C6204f1A869`; databases made for an
+  older contract or schema are refused at startup.
 - Owner / organiser / gate staff (user's Pelagus wallet): `0x001EbFd19D321Ac69CB7E7E8C1268Ea19ab94b83`
-- Demo event id 1: "[Headliner] World Tour", 0.01 QUAI (₹4,500), 100 seats, cap 10%. Metadata CID `QmVYKELiqFG5fZfEuDTpNdqmpzf2hG2TE9pTSJGa2DoQKi`.
+- Demo event id 1: "[Headliner] World Tour", 0.01 QUAI (₹4,500), 100 seats, cap 10%. Metadata CID `QmXQxrfm1ePUCwamch3T6aW1UuaL4iLZDpGqcmLUvBRceq`.
 - `backend/src/contract.json` / `frontend/src/contract.json` hold `{address, abi, chainId, ...}` (committed; no secrets).
 - The backend must sign as the owner: `backend/.env` `ORGANISER_PK` = the same key as `contracts/.env` `PRIVATE_KEY`.
 - **Wallet**: Pelagus optional (`new quais.BrowserProvider(window.pelagus)`, connect with `send('quai_requestAccounts')`).
@@ -134,22 +135,31 @@ in ₹ and converted to wei with floor division, then checked against the exact 
 5. **Lottery + anti-bot** ✅: `POST /events/:id/enter {quantity}` (x402 Work + verified + one entry per idHash per event +
    IP rate limit; every rejection logged); commit-reveal draw with partial fill `POST /events/:id/draw`,
    `GET /events/:id/draw-proof`, `GET /events/:id/stats`; `scripts/bot-attack.js` (10,000 attempts).
-6. **Tickets/gate/resale** ✅: `/me/tickets`, `/tickets/:id/qr`, `/gate/verify` (EXPIRED / NOT_ON_CHAIN / NOT_OWNER /
-   ALREADY_USED / VALID), list (`priceInr`) / cancel / buy / return, `POST /events/:id/resale-cap {pct}` (organiser:
-   setResaleCap on Quai, wait for confirmation, save pct + tx, mark listings above the new max invalid), `scripts/e2e.js`.
+6. **Tickets/gate/pass it on** ✅: `/me/tickets`, `/tickets/:id/qr`, `/gate/verify` (EXPIRED / NOT_ON_CHAIN / NOT_OWNER /
+   ALREADY_USED / LISTED / VALID), `POST /tickets/:id/return`, `POST /events/:id/resale-cap {pct}`. routes/market.js:
+   `POST /tickets/:id/list {priceInr, visibility, buyerPhone?}` (private → share link `/buy/:listingId`),
+   `POST /tickets/:id/cancel-listing`, `POST /tickets/:id/gift {phone}`, `GET /events/:id/marketplace` (10-minute
+   waitlist priority), `GET /listings/:id` (private: only the buyer/seller), `POST /listings/:id/buy` (verified +
+   x402 Work, paid from the buyer's wallet), `GET /tickets/:id/history`, `GET /users/lookup?phone`, `GET /me/wallet`,
+   `POST /admin/fund` (DEMO_MODE). Tables `listings`, `ticket_history`. services/chainEvents.js polls contract logs
+   (getLogs needs `nodeLocation: [0, 0]` for Cyprus-1) and mirrors them to Firestore `chain_events`. `scripts/e2e.js`.
 7. **Frontend** ✅: dark mobile-first design (bg #0B0D12, cards #151922, borders #262C38, text #F2F4F8, muted #9AA3B2, lime #C6F432 with
    dark text, error #C62828/#FF8A8A; Space Grotesk 700 headings, Inter body; radius 14–22px; stroke SVG icons; no emoji).
    Pages: Login, Home (`/`: all events as cards, open lotteries first; "Already entered" + disabled Enter for events
    the fan entered, from `myEntry` in `GET /events`), Event (`/events/:eventId`), Enter lottery (`/enter/:eventId`,
-   quantity input), My tickets (all events, event name on each), Resale, Gate scanner, Organiser dashboard (event
-   dropdown that drives stats / Run draw / Resale settings, create-event form with resale % + live ₹ preview);
+   quantity input), My tickets (all events, event name on each; "Gift from" / "Bought from" / "Gifted ✓"), Ticket
+   ("Pass it on" sheet with 4 options + lock countdown, listing badge + cancel, history), Pass on
+   (`/tickets/:id/pass/:mode`), Buy (`/buy/:listingId`), event Resale tab (live marketplace), Gate scanner,
+   wallet balance chip, Organiser dashboard (event dropdown that drives stats / Run draw / Resale settings, resale +
+   gift counts, create-event form with resale % + live ₹ preview);
    Pelagus connect; role nav. No event id is hardcoded anywhere: pages take it from the URL or the dropdown.
    The event page and resale page read the live cap from Firestore `fairpass/live/events/{id}` with `onSnapshot`
    (frontend `firebase` + `VITE_FIREBASE_*`), falling back to API polling when Firebase isn't configured.
 8. **Demo** ✅: `npm run demo` (resets backend/data/demo.db, DEMO_MODE=1 + DEMO_FIXED_OTP=123456, creates 3 events on
    Quai in parallel (`DEMO_EVENTS` in scripts/demo.js: World Tour ₹4,500 +10% 4 tickets; Monsoon Sessions ₹2,500 +5%
    3 tickets; Coastal Beats ₹6,000 +20% 5 tickets), seeds organiser 9000000001, staff 9000000002, fans 9000000011-15
-   (2-5 entered World Tour asking 2,1,1,1; Ravi and Meera also entered Monsoon Sessions; Asha enters live)), README.md.
+   (2-5 entered World Tour asking 2,1,1,1; Ravi and Meera also entered Monsoon Sessions; Asha enters live; each fan's
+   wallet funded with 0.05 QUAI so they can buy resale tickets)), README.md.
    ₹ maxima: shown as the clean figure (e.g. ₹2,625) when within one paisa of the on-chain cap; a listing at that
    price is snapped to the exact cap in wei (`money.js` `listingWei`) so rounding dust can't make the contract reject it.
 
@@ -157,11 +167,14 @@ in ₹ and converted to wei with floor division, then checked against the exact 
 
 1. bot-attack → dashboard shows blocked count
 2. fans enter choosing how many tickets (PoW visible) → organiser runs draw → winners minted on Quai (Quaiscan link)
-3. organiser sets resale to 15% (Resale settings card, on-chain tx) → a winner tries to list above +15% → rejected
-   (red error); lists at +12% instead → organiser lowers the cap to 5% → that listing shows "invalid – above new cap"
-   for the seller and can't be bought
-4. return to pool → the waitlisted fan gets the ticket
-5. gate: expired QR → REJECTED, fake → REJECTED, real → VALID, rescan → ALREADY_USED
+3. pass it on: a winner opens "Pass it on" → **Sell publicly** at the max → the listing appears live on the event's
+   Resale tab ("Waitlist priority — open to all in 9:59") → a waitlisted fan buys it (puzzle → "Ticket is yours") →
+   at the gate the seller's old QR is REJECTED (Not the owner) and the buyer's new QR is VALID
+4. **Sell privately**: phone + price → share link → that buyer opens it and buys; **Gift**: phone → verified name →
+   "Gift sent"; gifting that ticket again is blocked ("already gifted once")
+5. organiser lowers the resale cap → an existing listing above it shows "invalid – above new cap" and can't be bought;
+   over-cap prices turn red; **Return to pool** → the next waitlisted fan gets the ticket
+6. gate: expired QR → REJECTED, fake → REJECTED, real → VALID, rescan → ALREADY_USED
 
 ## Folder structure
 
@@ -178,8 +191,8 @@ Each part has `.env.example`; copy to `.env` (git-ignored). Never commit private
 
 ## Commands
 
-- `npm install` (root) · `npm run compile` · `npm run test:contracts` (25) · `npm run test:backend` (22, real Orchard + facilitator, ~6 min) · `npm test -w frontend`
-- `npm run demo` · `npm run bot-attack` · `npm run e2e` (against a running API with DEMO_MODE=1)
+- `npm install` (root) · `npm run compile` · `npm run test:contracts` (39) · `npm run test:backend` (22, real Orchard + facilitator, ~7 min) · `npm test -w frontend`
+- `npm run demo` · `npm run bot-attack` · `npm run e2e` (against a running API with DEMO_MODE=1 and QR_MAX_AGE_SECONDS=300)
 - `npm run deploy` (Orchard, needs `contracts/.env` PRIVATE_KEY) · `npm run dev:backend` · `npm run dev:frontend`
 
 ## Implementation notes
