@@ -1,5 +1,5 @@
 {
-  "name": "@chainmakers/contracts",
+  "name": "@fairpass/contracts",
   "private": true,
   "version": "0.1.0",
   "description": "Solidity contracts (ERC-721 tickets, lottery, resale, gate) for Quai Cyprus-1",

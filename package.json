@@ -1,7 +1,7 @@
 {
-  "name": "chainmakers",
+  "name": "fairpass",
   "private": true,
-  "description": "ChainMakers - fair concert ticketing on Quai Network (Orchard testnet, Cyprus-1)",
+  "description": "FairPass - fair concert ticketing on Quai Network (Orchard testnet, Cyprus-1)",
   "workspaces": [
     "contracts",
     "backend",
