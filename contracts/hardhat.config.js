@@ -4,15 +4,21 @@ require('@quai/hardhat-deploy-metadata') // pushes contract metadata to IPFS so 
 
 require('dotenv').config()
 
-const accounts = process.env.CYPRUS1_PK ? [process.env.CYPRUS1_PK] : []
+const accounts = process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : []
 
 module.exports = {
   defaultNetwork: 'hardhat',
   networks: {
+    // Quai Orchard testnet, zone Cyprus-1
     cyprus1: {
-      url: process.env.RPC_URL || 'https://orchard.rpc.quai.network/cyprus1',
+      url: process.env.RPC_URL || 'https://orchard.rpc.quai.network',
       accounts,
       chainId: Number(process.env.CHAIN_ID || 15000),
+    },
+    // Fallback: `npx hardhat node` in another terminal, then deploy with --network localhost
+    localhost: {
+      url: 'http://127.0.0.1:8545',
+      chainId: 31337,
     },
   },
   solidity: {

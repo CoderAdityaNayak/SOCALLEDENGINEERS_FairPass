@@ -38,6 +38,9 @@ Goal: fans get tickets at a fair price, resale is possible but can't be exploite
 - **Addresses must be Cyprus-1** (`quais.getZoneForAddress(a) === quais.Zone.Cyprus1`, i.e. prefix `0x00`, 2nd byte < 0x80,
   and `quais.isQuaiAddress(a)`). `quais.Wallet.createRandom` does not exist: make custodial wallets by generating random
   32-byte keys with `new quais.Wallet(key)` until the address is in Cyprus-1 (~500 tries, milliseconds).
+- **RPC gotcha**: with `usePathing: true`, pass the BASE URL `https://orchard.rpc.quai.network` (quais appends
+  `/cyprus1` itself). Passing `.../cyprus1` with usePathing hangs forever. Zone-specific reads need the shard:
+  `provider.getBlockNumber(quais.Shard.Cyprus1)` (no argument = Prime chain). Address-based calls route automatically.
 - quais facts: `new quais.JsonRpcProvider(RPC, undefined, { usePathing: true })`; `wallet.signMessage(msg)`;
   `quais.verifyMessage(msg, sig)` returns the address; `quais.parseQuai` / `formatQuai`.
 - **Deploy**: `const ipfsHash = await hre.deployMetadata.pushMetadataToIPFS('FairPass')`, then
