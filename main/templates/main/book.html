@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Seats</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root { --bg:#fff; --ink:#000; --mute:#6b6b6b; --line:#e6e6e6; --free:#1f9d55; --blocked:#d93025; --vip:#7c3aed; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  [hidden] { display:none !important; }
+  body { font:400 15px/1.5 'Inter',system-ui,-apple-system,'Segoe UI',Arial,sans-serif; background:var(--bg); color:var(--ink); min-height:100vh; padding-top:env(safe-area-inset-top,0px); }
+  header { border-bottom:1px solid var(--line); }
+  .bar { max-width:720px; margin:0 auto; padding:14px 20px; display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  .brand { font-weight:700; font-size:18px; letter-spacing:-.03em; color:var(--ink); text-decoration:none; }
+  #userBox { display:flex; align-items:center; gap:10px; font-size:13px; font-weight:500; min-width:0; }
+  #userBox img { width:28px; height:28px; border-radius:50%; background:var(--line); }
+  #userName { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:30vw; }
+  main { max-width:720px; margin:0 auto; padding:32px 20px 140px; }
+  h1 { font-size:clamp(30px,8vw,44px); line-height:1.05; font-weight:700; letter-spacing:-.035em; margin-bottom:10px; }
+  h2 { font-size:15px; font-weight:600; margin:28px 0 12px; }
+  .sub { color:var(--mute); margin-bottom:24px; max-width:46ch; }
+  button { font:inherit; cursor:pointer; color:inherit; }
+  button:focus-visible, a:focus-visible, .seat:focus-visible { outline:2px solid var(--ink); outline-offset:2px; }
+  .btn { background:var(--ink); color:var(--bg); border:0; border-radius:10px; padding:13px 20px; font-weight:600; }
+  .btn.alt { background:none; color:var(--ink); border:1px solid var(--line); }
+  .btn:disabled { opacity:.4; cursor:default; }
+  .text { background:none; border:0; font-size:13px; font-weight:500; color:var(--mute); padding:4px 0; }
+  .err { color:var(--blocked); font-size:13px; margin-top:12px; min-height:1em; }
+
+  .events { list-style:none; border-top:1px solid var(--line); }
+  .events button { width:100%; text-align:left; background:none; border:0; border-bottom:1px solid var(--line); padding:18px 0; display:flex; justify-content:space-between; align-items:center; gap:16px; }
+  .events strong { display:block; font-size:19px; font-weight:600; letter-spacing:-.02em; }
+  .events span { color:var(--mute); font-size:13px; }
+  .events .free { color:var(--ink); font-weight:500; white-space:nowrap; text-align:right; }
+  .empty { color:var(--mute); padding:20px 0; }
+
+  .legend { display:flex; flex-wrap:wrap; gap:16px; font-size:13px; color:var(--mute); margin:4px 0 8px; }
+  .legend i { display:inline-block; width:11px; height:11px; border-radius:3px; margin-right:6px; vertical-align:-1px; }
+  .stage { margin:28px auto 8px; max-width:360px; text-align:center; font-size:13px; color:var(--mute); }
+  .stage::before { content:""; display:block; height:36px; border:2px solid var(--ink); border-bottom:0; border-radius:180px 180px 0 0 / 36px 36px 0 0; margin-bottom:8px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(44px,1fr)); gap:8px; max-width:560px; }
+  .seat { aspect-ratio:1; border:0; border-radius:8px; background:var(--free); color:#fff; font-size:13px; font-weight:600; }
+  .seat.vip { background:var(--vip); }
+  .seat.blocked { background:var(--blocked); cursor:not-allowed; }
+  .seat.sel { background:var(--ink); transform:scale(1.06); }
+
+  #cart { position:fixed; left:0; right:0; bottom:0; background:var(--bg); border-top:1px solid var(--line); padding:12px 20px calc(12px + env(safe-area-inset-bottom,0px)); }
+  #cart .in { max-width:720px; margin:0 auto; display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  #cart p { font-weight:600; }
+  #cart small { display:block; font-weight:400; color:var(--mute); font-size:13px; }
+
+  dialog { border:0; border-radius:16px; padding:24px; width:min(92vw,420px); margin:auto; color:var(--ink); background:var(--bg); }
+  dialog::backdrop { background:rgba(0,0,0,.45); }
+  dialog h2 { margin:0 0 16px; font-size:20px; letter-spacing:-.02em; }
+  dl { display:grid; grid-template-columns:auto 1fr; gap:8px 16px; font-size:14px; margin-bottom:16px; }
+  dt { color:var(--mute); } dd { text-align:right; font-weight:500; }
+  dd.total { font-weight:700; font-size:17px; }
+  .fine { font-size:12px; color:var(--mute); margin-bottom:18px; }
+  .actions { display:flex; gap:10px; } .actions .btn { flex:1; }
+  .toast { position:fixed; left:50%; bottom:96px; transform:translateX(-50%); background:var(--ink); color:var(--bg); font-size:13px; font-weight:500; padding:11px 16px; border-radius:10px; max-width:calc(100% - 32px); }
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <a class="brand" href="index.html">Seats</a>
+    <div id="userBox" hidden>
+      <img id="userImg" alt="" referrerpolicy="no-referrer">
+      <span id="userName"></span>
+      <button class="text" id="signOutBtn" type="button">Sign out</button>
+    </div>
+  </div>
+</header>
+
+<main>
+  <section id="loading"><p class="sub">Loading…</p></section>
+
+  <section id="signedOut" hidden>
+    <h1>Sign in to book your seats</h1>
+    <p class="sub">Use your Google account. You stay signed in on this device while you keep using it.</p>
+    <button class="btn" id="signInBtn" type="button">Continue with Google</button>
+    <p class="err" id="authErr" role="alert"></p>
+  </section>
+
+  <section id="eventsView" hidden>
+    <h1>Upcoming events</h1>
+    <p class="sub">Select an event to see its seats.</p>
+    <ul class="events" id="eventList"></ul>
+  </section>
+
+  <section id="seatsView" hidden>
+    <button class="text" id="backBtn" type="button">Back to events</button>
+    <h1 id="evName" style="margin-top:12px"></h1>
+    <p class="sub" id="evMeta" style="margin-bottom:12px"></p>
+    <div class="legend">
+      <span><i style="background:var(--free)"></i>Free</span>
+      <span><i style="background:var(--blocked)"></i>Blocked</span>
+      <span><i style="background:var(--vip)"></i>VIP</span>
+      <span><i style="background:var(--ink)"></i>Your pick</span>
+    </div>
+    <div class="stage">Stage</div>
+    <h2>VIP, ₹500 each</h2>
+    <div class="grid" id="vipGrid"></div>
+    <h2>Standard, ₹250 each</h2>
+    <div class="grid" id="stdGrid"></div>
+  </section>
+</main>
+
+<div id="cart" hidden>
+  <div class="in">
+    <p id="cartText"></p>
+    <button class="btn" id="payBtn" type="button">Continue to payment</button>
+  </div>
+</div>
+
+<dialog id="payDlg" aria-labelledby="payTitle">
+  <div id="payStep">
+    <h2 id="payTitle">Confirm and pay</h2>
+    <dl id="payRows"></dl>
+    <p class="fine">Demo payment. No money is charged.</p>
+    <p class="err" id="payErr" role="alert"></p>
+    <div class="actions">
+      <button class="btn alt" id="cancelPay" type="button">Cancel</button>
+      <button class="btn" id="confirmPay" type="button"></button>
+    </div>
+  </div>
+  <div id="doneStep" hidden>
+    <h2>Booking confirmed</h2>
+    <dl id="doneRows"></dl>
+    <button class="btn" id="doneBtn" type="button" style="width:100%">Done</button>
+  </div>
+</dialog>
+<div class="toast" id="toast" hidden></div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-app.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-auth.js";
+import { getFirestore, collection, doc, onSnapshot, query, orderBy, runTransaction, serverTimestamp, increment } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-firestore.js";
+
+const app = initializeApp({
+  apiKey: "AIzaSyBCuzlAn1_jxnjzpHRDDHB6TUqzmes4kS0",
+  authDomain: "navya-e59a8.firebaseapp.com",
+  projectId: "navya-e59a8",
+  storageBucket: "navya-e59a8.firebasestorage.app",
+  messagingSenderId: "666756856596",
+  appId: "1:666756856596:web:4a6fdbf025e47efe9da001"
+});
+const auth = getAuth(app), db = getFirestore(app);
+
+const PRICE = { yes: 500, no: 250 };
+const $ = id => document.getElementById(id);
+const h = (t, c, x) => { const n = document.createElement(t); if (c) n.className = c; if (x != null) n.textContent = x; return n; };
+const fmt = dt => { const d = new Date(dt); return isNaN(d) ? dt : d.toLocaleString('en-IN', { weekday:'short', day:'numeric', month:'short', year:'numeric', hour:'numeric', minute:'2-digit' }); };
+const inr = n => '₹' + n.toLocaleString('en-IN');
+const toast = m => { const t = $('toast'); t.textContent = m; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => t.hidden = true, 3200); };
+
+let user = null, events = [], ev = null, seats = [], sel = new Set(), unEv = null, unSeats = null;
+
+function show(view) {
+  ['loading','signedOut','eventsView','seatsView'].forEach(i => $(i).hidden = i !== view);
+  renderCart();
+}
+
+/* ---------- auth ---------- */
+$('signInBtn').onclick = async () => {
+  $('authErr').textContent = '';
+  try {
+    await setPersistence(auth, browserLocalPersistence);   // stays signed in on this device
+    await signInWithPopup(auth, new GoogleAuthProvider());
+  } catch (e) {
+    if (e.code !== 'auth/popup-closed-by-user' && e.code !== 'auth/cancelled-popup-request')
+      $('authErr').textContent = 'Sign-in failed (' + e.code + '). Check that Google sign-in is on in Firebase and this domain is authorised.';
+  }
+};
+$('signOutBtn').onclick = () => signOut(auth);
+
+onAuthStateChanged(auth, u => {
+  user = u;
+  $('userBox').hidden = !u;
+  if (u) {
+    $('userImg').src = u.photoURL || '';
+    $('userName').textContent = u.displayName || u.email;
+    listenEvents();
+    show(ev ? 'seatsView' : 'eventsView');
+  } else {
+    unEv && unEv(); unSeats && unSeats();
+    ev = null; sel.clear(); events = [];
+    show('signedOut');
+  }
+});
+
+/* ---------- events (Firestore: events/{id}) ---------- */
+function listenEvents() {
+  unEv && unEv();
+  unEv = onSnapshot(query(collection(db, 'events'), orderBy('datetime')), snap => {
+    events = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    if (ev) ev = events.find(e => e.id === ev.id) || ev;
+    renderEvents();
+  }, err => $('eventList').replaceChildren(h('li', 'empty', 'Couldn’t load events (' + err.code + ').')));
+}
+
+function renderEvents() {
+  const list = $('eventList');
+  if (!events.length) { list.replaceChildren(h('li', 'empty', 'No events yet. Check back soon.')); return; }
+  list.replaceChildren(...events.map(e => {
+    const li = h('li'), b = h('button'); b.type = 'button';
+    const l = h('div'); l.append(h('strong', null, e.name), h('span', null, fmt(e.datetime)));
+    b.append(l, h('span', 'free', e.seatsFree > 0 ? e.seatsFree + ' of ' + e.seatCount + ' free' : 'Sold out'));
+    b.onclick = () => openEvent(e);
+    li.append(b); return li;
+  }));
+}
+
+/* ---------- seats (Firestore: events/{id}/seats/{n}) ---------- */
+function openEvent(e) {
+  ev = e; sel.clear(); seats = [];
+  unSeats && unSeats();
+  unSeats = onSnapshot(query(collection(db, 'events', e.id, 'seats'), orderBy('seatNumber')), snap => {
+    seats = snap.docs.map(d => d.data());
+    sel.forEach(n => { const s = seats.find(x => x.seatNumber === n); if (!s || s.status !== 'free') sel.delete(n); });
+    renderSeats();
+  });
+  show('seatsView');
+}
+$('backBtn').onclick = () => { unSeats && unSeats(); ev = null; sel.clear(); show('eventsView'); };
+
+function seatBtn(s) {
+  const b = h('button', 'seat' + (s.vipStatus === 'yes' ? ' vip' : '') + (s.status !== 'free' ? ' blocked' : '') + (sel.has(s.seatNumber) ? ' sel' : ''), s.seatNumber);
+  b.type = 'button'; b.disabled = s.status !== 'free';
+  b.setAttribute('aria-label', 'Seat ' + s.seatNumber + ', ' + s.status + (s.vipStatus === 'yes' ? ', VIP' : ''));
+  b.onclick = () => { sel.has(s.seatNumber) ? sel.delete(s.seatNumber) : sel.add(s.seatNumber); renderSeats(); };
+  return b;
+}
+function renderSeats() {
+  if (!ev) return;
+  $('evName').textContent = ev.name;
+  $('evMeta').textContent = fmt(ev.datetime) + ', ' + ev.seatsFree + ' of ' + ev.seatCount + ' seats free';
+  $('vipGrid').replaceChildren(...seats.filter(s => s.vipStatus === 'yes').map(seatBtn));
+  $('stdGrid').replaceChildren(...seats.filter(s => s.vipStatus !== 'yes').map(seatBtn));
+  renderCart();
+}
+const total = () => [...sel].reduce((t, n) => t + PRICE[(seats.find(s => s.seatNumber === n) || {}).vipStatus || 'no'], 0);
+function renderCart() {
+  const on = !$('seatsView').hidden && sel.size > 0;
+  $('cart').hidden = !on;
+  if (on) $('cartText').replaceChildren(sel.size + (sel.size === 1 ? ' seat' : ' seats'), Object.assign(h('small'), { textContent: inr(total()) }));
+}
+
+/* ---------- payment modal + booking ---------- */
+const row = (dl, k, v, cls) => { dl.append(h('dt', null, k)); dl.append(h('dd', cls, v)); };
+$('payBtn').onclick = () => {
+  const dl = $('payRows'); dl.replaceChildren();
+  row(dl, 'Event', ev.name); row(dl, 'When', fmt(ev.datetime));
+  row(dl, 'Seats', [...sel].sort((a, b) => a - b).join(', ')); row(dl, 'Total', inr(total()), 'total');
+  $('confirmPay').textContent = 'Pay ' + inr(total()); $('confirmPay').disabled = false;
+  $('payErr').textContent = ''; $('payStep').hidden = false; $('doneStep').hidden = true;
+  $('payDlg').showModal();
+};
+$('cancelPay').onclick = () => $('payDlg').close();
+$('doneBtn').onclick = () => $('payDlg').close();
+
+$('confirmPay').onclick = async () => {
+  const btn = $('confirmPay'), nums = [...sel].sort((a, b) => a - b), amount = total();
+  btn.disabled = true; btn.textContent = 'Processing…'; $('payErr').textContent = '';
+  try {
+    await new Promise(r => setTimeout(r, 900));            // stands in for a real payment gateway
+    const evRef = doc(db, 'events', ev.id), bookRef = doc(collection(db, 'events', ev.id, 'bookings'));
+    await runTransaction(db, async tx => {
+      const snaps = await Promise.all(nums.map(n => tx.get(doc(db, 'events', ev.id, 'seats', String(n)))));
+      const taken = snaps.filter(s => !s.exists() || s.data().status !== 'free').map(s => s.id);
+      if (taken.length) throw Object.assign(new Error('taken'), { taken });
+      snaps.forEach(s => tx.update(s.ref, { status: 'blocked', bookedBy: user.uid, bookedAt: serverTimestamp() }));
+      tx.update(evRef, { seatsFree: increment(-nums.length) });
+      tx.set(bookRef, { uid: user.uid, name: user.displayName || '', email: user.email || '', seats: nums, amount, createdAt: serverTimestamp() });
+    });
+    const dl = $('doneRows'); dl.replaceChildren();
+    row(dl, 'Event', ev.name); row(dl, 'Seats', nums.join(', ')); row(dl, 'Paid', inr(amount)); row(dl, 'Booking ref', bookRef.id.slice(0, 8));
+    sel.clear(); renderSeats();
+    $('payStep').hidden = true; $('doneStep').hidden = false;
+  } catch (e) {
+    if (e.taken) { $('payDlg').close(); toast('Seat ' + e.taken.join(', ') + ' was just booked by someone else. Pick another.'); }
+    else { $('payErr').textContent = 'Booking failed (' + (e.code || e.message) + '). Try again.'; btn.disabled = false; btn.textContent = 'Pay ' + inr(amount); }
+  }
+};
+</script>
+</body>
+</html>

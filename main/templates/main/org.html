@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Create event</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root { --bg:#fff; --ink:#000; --mute:#6b6b6b; --line:#e6e6e6; --blocked:#d93025; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  [hidden] { display:none !important; }
+  body { font:400 15px/1.5 'Inter',system-ui,-apple-system,'Segoe UI',Arial,sans-serif; background:var(--bg); color:var(--ink); min-height:100vh; padding-top:env(safe-area-inset-top,0px); }
+  header { border-bottom:1px solid var(--line); }
+  .bar { max-width:720px; margin:0 auto; padding:14px 20px; display:flex; align-items:center; justify-content:space-between; }
+  .brand { font-weight:700; font-size:18px; letter-spacing:-.03em; color:var(--ink); text-decoration:none; }
+  .nav { font-size:13px; font-weight:500; color:var(--mute); text-decoration:none; }
+  main { max-width:720px; margin:0 auto; padding:32px 20px 60px; }
+  h1 { font-size:clamp(30px,8vw,44px); line-height:1.05; font-weight:700; letter-spacing:-.035em; margin-bottom:10px; }
+  h2 { font-size:15px; font-weight:600; margin:40px 0 12px; }
+  .sub { color:var(--mute); margin-bottom:24px; max-width:46ch; }
+  form { display:grid; gap:18px; max-width:440px; }
+  label { display:grid; gap:6px; font-size:13px; font-weight:600; }
+  label span { color:var(--mute); font-weight:400; }
+  input { font:inherit; font-size:16px; color:var(--ink); background:var(--bg); border:1px solid var(--line); border-radius:10px; padding:12px 14px; width:100%; }
+  input:focus-visible, button:focus-visible, a:focus-visible { outline:2px solid var(--ink); outline-offset:2px; border-color:var(--ink); }
+  .btn { font:inherit; font-weight:600; background:var(--ink); color:var(--bg); border:0; border-radius:10px; padding:13px 20px; cursor:pointer; }
+  .btn:disabled { opacity:.4; cursor:default; }
+  .events { list-style:none; border-top:1px solid var(--line); }
+  .events li { display:flex; justify-content:space-between; align-items:center; gap:16px; padding:16px 0; border-bottom:1px solid var(--line); }
+  .events strong { display:block; font-size:17px; font-weight:600; letter-spacing:-.02em; }
+  .events small { color:var(--mute); font-size:13px; }
+  .events a { font-size:13px; font-weight:600; color:var(--ink); }
+  .empty { color:var(--mute); padding:16px 0; }
+  .msg { font-size:13px; margin-top:12px; min-height:1em; }
+  .msg.bad { color:var(--blocked); }
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <a class="brand" href="index.html">Seats</a>
+    <a class="nav" href="index.html">Book seats</a>
+  </div>
+</header>
+<main>
+  <h1>Create an event</h1>
+  <p class="sub">New events open for booking with every seat free. The first 10 seats are VIP.</p>
+  <form id="orgForm">
+    <label>Event name<input id="evName" type="text" required maxlength="60" placeholder="Friday night live"></label>
+    <label>Number of seats <span>1 to 500</span><input id="evSeats" type="number" required min="1" max="500" value="50"></label>
+    <label>Date and time<input id="evDate" type="datetime-local" required></label>
+    <button class="btn" id="createBtn" type="submit">Create event</button>
+    <p class="msg" id="msg" role="status"></p>
+  </form>
+
+  <h2>Your events</h2>
+  <ul class="events" id="orgList"></ul>
+</main>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-app.js";
+import { getFirestore, collection, doc, writeBatch, onSnapshot, query, orderBy, serverTimestamp } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-firestore.js";
+
+const app = initializeApp({
+  apiKey: "AIzaSyBCuzlAn1_jxnjzpHRDDHB6TUqzmes4kS0",
+  authDomain: "navya-e59a8.firebaseapp.com",
+  projectId: "navya-e59a8",
+  storageBucket: "navya-e59a8.firebasestorage.app",
+  messagingSenderId: "666756856596",
+  appId: "1:666756856596:web:4a6fdbf025e47efe9da001"
+});
+const db = getFirestore(app);
+const $ = id => document.getElementById(id);
+const h = (t, x) => { const n = document.createElement(t); if (x != null) n.textContent = x; return n; };
+const fmt = dt => { const d = new Date(dt); return isNaN(d) ? dt : d.toLocaleString('en-IN', { weekday:'short', day:'numeric', month:'short', year:'numeric', hour:'numeric', minute:'2-digit' }); };
+const VIP_COUNT = 10;
+
+// events/{eventId}  ->  seats/{seatNumber}  (all free)   and later  bookings/{id}
+$('orgForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const name = $('evName').value.trim(), count = parseInt($('evSeats').value, 10), datetime = $('evDate').value;
+  const msg = $('msg'), btn = $('createBtn');
+  if (!name || !(count >= 1 && count <= 500) || !datetime) { msg.className = 'msg bad'; msg.textContent = 'Enter a name, 1 to 500 seats and a date and time.'; return; }
+  btn.disabled = true; btn.textContent = 'Creating…'; msg.className = 'msg'; msg.textContent = '';
+  try {
+    const evRef = doc(collection(db, 'events'));
+    const ops = [[evRef, { name, datetime, seatCount: count, seatsFree: count, vipCount: Math.min(VIP_COUNT, count), createdAt: serverTimestamp() }]];
+    for (let n = 1; n <= count; n++)
+      ops.push([doc(db, 'events', evRef.id, 'seats', String(n)), { seatNumber: n, status: 'free', vipStatus: n <= VIP_COUNT ? 'yes' : 'no', datetime }]);
+    for (let i = 0; i < ops.length; i += 450) {            // Firestore batches hold 500 writes
+      const batch = writeBatch(db);
+      ops.slice(i, i + 450).forEach(([r, d]) => batch.set(r, d));
+      await batch.commit();
+    }
+    e.target.reset(); $('evSeats').value = 50;
+    msg.textContent = 'Event created. It is open for booking.';
+  } catch (err) {
+    msg.className = 'msg bad'; msg.textContent = 'Couldn’t create the event (' + (err.code || err.message) + ').';
+  }
+  btn.disabled = false; btn.textContent = 'Create event';
+});
+
+onSnapshot(query(collection(db, 'events'), orderBy('datetime')), snap => {
+  const list = $('orgList');
+  if (snap.empty) { const li = h('li', 'No events yet.'); li.className = 'empty'; list.replaceChildren(li); return; }
+  list.replaceChildren(...snap.docs.map(d => {
+    const v = d.data(), li = h('li'), l = h('div'), s = h('strong', v.name), sm = h('small', fmt(v.datetime) + ', ' + v.seatsFree + ' of ' + v.seatCount + ' seats free');
+    const a = h('a', 'Open'); a.href = 'index.html';
+    l.append(s, sm); li.append(l, a); return li;
+  }));
+}, err => { const li = h('li', 'Couldn’t load events (' + err.code + ').'); li.className = 'empty'; $('orgList').replaceChildren(li); });
+</script>
+</body>
+</html>
