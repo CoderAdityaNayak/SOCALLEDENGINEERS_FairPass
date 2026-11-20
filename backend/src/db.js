@@ -136,6 +136,12 @@ CREATE TABLE IF NOT EXISTS activity (
 );
 `)
 
+// A random id per database. Login tokens carry it, so a token issued by an older (reset) database
+// can't log in as whoever now has the same user id.
+db.exec('CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
+db.prepare("INSERT OR IGNORE INTO meta (key, value) VALUES ('instance', lower(hex(randomblob(16))))").run()
+export const instanceId = db.prepare("SELECT value FROM meta WHERE key = 'instance'").get().value
+
 export function logBlocked({ reason, ip, eventId = null, userId = null, detail = null }) {
   db.prepare('INSERT INTO blocked_attempts (reason, ip, eventId, userId, detail) VALUES (?, ?, ?, ?, ?)').run(
     reason,

@@ -104,7 +104,7 @@ Goal: fans get tickets at a fair price, resale is possible but can't be exploite
 7. **Frontend** ✅: dark mobile-first design (bg #0B0D12, cards #151922, borders #262C38, text #F2F4F8, muted #9AA3B2, lime #C6F432 with
    dark text, error #C62828/#FF8A8A; Space Grotesk 700 headings, Inter body; radius 14–22px; stroke SVG icons; no emoji).
    Pages: Login, Home/Event, Enter lottery, My ticket, Resale, Gate scanner, Organiser dashboard, Corporate booking; Pelagus connect; role nav.
-8. **Demo**: `npm run demo` (seeds organiser, staff, 5 fans, 1 company + 5 employees, open event; prints phones + OTPs), README.
+8. **Demo** ✅: `npm run demo` (resets backend/data/demo.db, DEMO_MODE=1 + DEMO_FIXED_OTP=123456, creates a fresh on-chain event with 3 lottery tickets, seeds organiser 9000000001, staff 9000000002, fans 9000000011-15 (2-5 pre-entered), company admin 9000000020 with Acme approved for 5 seats, employees 9000000021-25 verified but not invited), README.md.
 
 ### Demo script
 
@@ -129,5 +129,17 @@ Each part has `.env.example`; copy to `.env` (git-ignored). Never commit private
 
 ## Commands
 
-- `npm install` (root) · `npm run compile` · `npm run test:contracts`
-- `npm run deploy -w contracts` (Orchard, needs `contracts/.env`) · `npm run dev:backend` · `npm run dev:frontend`
+- `npm install` (root) · `npm run compile` · `npm run test:contracts` (20) · `npm run test:backend` (21, real Orchard + facilitator, ~6 min) · `npm test -w frontend`
+- `npm run demo` · `npm run bot-attack` · `npm run e2e` (against a running API with DEMO_MODE=1)
+- `npm run deploy` (Orchard, needs `contracts/.env` PRIVATE_KEY) · `npm run dev:backend` · `npm run dev:frontend`
+
+## Implementation notes
+
+- Orchard txs take 20-50 s. The backend hands out nonces itself (`services/quai.js` broadcast queue per signer) so
+  several txs are broadcast back-to-back and confirmed in parallel. The gate locks the ticket in SQLite, broadcasts
+  `markUsed` and answers VALID immediately (`markUsedFast`).
+- JWTs carry the DB instance id (`meta` table), so tokens from a reset database are rejected.
+- DEMO_MODE only: OTPs are returned in API responses, and `x-fairpass-demo-client` splits the rate-limit bucket so the bot
+  simulator doesn't lock the presenter's browser out. Both are ignored outside demo mode.
+- Gate pass message: `FairPass gate pass\ncontract: <addr>\nchain: <id>\ntoken: <id>\ntime: <unix>` (services/gatepass.js).
+- Shell gotcha: never put Markdown with backticks inside a double-quoted `node -e "..."`; bash runs them as commands.

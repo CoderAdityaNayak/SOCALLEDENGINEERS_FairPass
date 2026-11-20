@@ -45,8 +45,14 @@ async function main() {
     console.log(`  ${wave.padEnd(52)} blocked ${fmt(blocked).padStart(5)} / ${fmt(results.length).padStart(5)}   (${parts})`)
     return results
   }
+  // The demo-client tag gives the simulated bots their own rate-limit bucket (DEMO_MODE only), so the
+  // presenter's browser on the same machine isn't locked out afterwards.
   const enter = (token, extraHeaders) => () =>
-    api('POST', `/events/${eventId}/enter`, { token, body: { quantity: 2 }, headers: extraHeaders })
+    api('POST', `/events/${eventId}/enter`, {
+      token,
+      body: { quantity: 2 },
+      headers: { 'x-fairpass-demo-client': 'bot-sim', ...extraHeaders },
+    })
   const t0 = Date.now()
 
   // A: anonymous
@@ -106,7 +112,7 @@ async function main() {
   } else {
     console.log('\n  Honest bot entries:', honest.map((h) => `${h.result.status} ${JSON.stringify(h.result.data)}`).join(' | '))
   }
-  console.log('  Note: the per-IP rate limit for this machine resets after 60 s.\n')
+  console.log('  Open the organiser dashboard to see the blocked attempts by reason.\n')
 }
 
 main().catch((err) => {

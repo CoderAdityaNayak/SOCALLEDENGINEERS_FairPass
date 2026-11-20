@@ -48,7 +48,11 @@ router.post('/:id/enter', async (req, res) => {
       .get(event.id, user.idHash)
   if (already) block(409, 'DUPLICATE_ENTRY', 'This ID already has an entry or a seat for this event')
 
-  if (overLimit(`enter:${ip}`, config.rateLimitPerMinute)) block(429, 'RATE_LIMITED', 'Too many attempts from your network. Try again in a minute.')
+  // DEMO_MODE only: the bot simulator tags itself so a live demo on one laptop doesn't rate-limit the
+  // presenter's browser too. Outside demo mode the header is ignored (it could be spoofed).
+  const demoClient = config.demoMode ? req.get('x-fairpass-demo-client') || '' : ''
+  if (overLimit(`enter:${ip}:${demoClient}`, config.rateLimitPerMinute))
+    block(429, 'RATE_LIMITED', 'Too many attempts from your network. Try again in a minute.')
 
   // Proof of work (x402 Work)
   const url = entryUrl(event.id)

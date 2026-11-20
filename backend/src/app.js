@@ -19,7 +19,7 @@ export function createApp() {
     cors({
       origin: config.frontendOrigin,
       // x402 Work uses these headers; the browser must be allowed to send/read them.
-      allowedHeaders: ['content-type', 'authorization', 'payment-signature'],
+      allowedHeaders: ['content-type', 'authorization', 'payment-signature', 'x-fairpass-demo-client'],
       exposedHeaders: ['payment-required', 'payment-response'],
     }),
   )

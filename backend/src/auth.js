@@ -1,7 +1,7 @@
 // JWT auth + role middleware.
 import jwt from 'jsonwebtoken'
 import { config } from './config.js'
-import { db } from './db.js'
+import { db, instanceId } from './db.js'
 
 export class HttpError extends Error {
   constructor(status, message, extra = {}) {
@@ -11,7 +11,8 @@ export class HttpError extends Error {
   }
 }
 
-export const signToken = (user) => jwt.sign({ sub: user.id, role: user.role }, config.jwtSecret, { expiresIn: '7d' })
+export const signToken = (user) =>
+  jwt.sign({ sub: user.id, role: user.role, iid: instanceId }, config.jwtSecret, { expiresIn: '7d' })
 
 /** Reads the Bearer token if present; sets req.user (or leaves it undefined). */
 export function loadUser(req) {
@@ -19,7 +20,8 @@ export function loadUser(req) {
   const token = header.startsWith('Bearer ') ? header.slice(7) : null
   if (!token) return null
   try {
-    const { sub } = jwt.verify(token, config.jwtSecret)
+    const { sub, iid } = jwt.verify(token, config.jwtSecret)
+    if (iid !== instanceId) return null // issued by a different (e.g. reset) database
     return db.prepare('SELECT * FROM users WHERE id = ?').get(sub) || null
   } catch {
     return null

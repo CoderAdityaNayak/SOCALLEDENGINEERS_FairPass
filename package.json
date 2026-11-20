@@ -17,6 +17,7 @@
     "deploy:local": "npm run deploy:local -w contracts",
     "bot-attack": "node scripts/bot-attack.js",
     "test:backend": "npm test -w backend",
-    "e2e": "node scripts/e2e.js"
+    "e2e": "node scripts/e2e.js",
+    "demo": "node scripts/demo.js"
   }
 }
