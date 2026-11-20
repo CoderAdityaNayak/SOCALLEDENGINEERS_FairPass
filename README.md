@@ -83,7 +83,11 @@ flowchart LR
 | **Cloud Firestore** (optional mirror) | A copy of every SQLite row, updated within about a second | `fairpass/{databaseId}/{table}/{id}`; `fairpass/_current` points to the running database |
 
 The Firestore mirror turns on when `FIREBASE_PROJECT_ID` (and the rest of the web config) is set in `backend/.env`.
-Every insert, update and delete is copied by SQLite triggers. Left out on purpose: custodial wallet keys, and the draw
+Every insert, update and delete is copied by SQLite triggers. Documents also carry organiser-readable fields (fan
+name and phone, ID type and masked ID such as `XXXX XXXX 1234`, lottery entry number, event name, block/row/seat,
+holder and staff names on scans, Quaiscan links), and `event_stats/{eventId}` holds the per-event totals.
+There are no passwords (login is phone + OTP, and OTPs are never stored); the full Aadhaar/PAN number is never stored,
+only its keyed hash, its type and its last 4 characters. Left out on purpose: custodial wallet keys, and the draw
 seed until the draw has happened. Blocked bot attempts are stored as one summary per event (counts by reason + the
 latest 50) so a 10,000-request bot attack doesn't use up the free plan's 20,000 writes a day; set
 `FIRESTORE_MIRROR_ALL_BLOCKED=1` to store every attempt. `GET /health` shows the mirror's status.

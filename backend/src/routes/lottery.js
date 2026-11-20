@@ -83,6 +83,7 @@ router.post('/:id/enter', async (req, res) => {
     throw err
   }
   const entryNumber = db.prepare('SELECT COUNT(*) n FROM entries WHERE eventId = ? AND id <= ?').get(event.id, entryId).n
+  db.prepare('UPDATE entries SET entryNumber = ? WHERE id = ?').run(entryNumber, entryId)
   res
     .status(201)
     .set(proof.headers)

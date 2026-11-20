@@ -136,6 +136,16 @@ CREATE TABLE IF NOT EXISTS activity (
 );
 `)
 
+// Columns added after the first release (ALTER keeps existing demo databases working).
+function addColumn(table, column, type) {
+  if (!db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column))
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`)
+}
+addColumn('users', 'idType', 'TEXT') // AADHAAR | PAN
+addColumn('users', 'idLast4', 'TEXT') // last 4 characters only, for a masked display
+addColumn('users', 'lastLoginAt', 'TEXT')
+addColumn('entries', 'entryNumber', 'INTEGER') // the fan's lottery number for this event
+
 // A random id per database. Login tokens carry it, so a token issued by an older (reset) database
 // can't log in as whoever now has the same user id.
 db.exec('CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)')

@@ -47,14 +47,129 @@ let lastLoggedError = 0
 
 const rowStmt = Object.fromEntries(Object.entries(TABLES).map(([t, pk]) => [t, db.prepare(`SELECT * FROM ${t} WHERE ${pk} = ?`)]))
 
+// Lookups that add organiser-readable fields (names, phones, event names) to each document.
+const q = {
+  user: db.prepare('SELECT id, name, phone, role, idType, idLast4, walletAddress FROM users WHERE id = ?'),
+  event: db.prepare('SELECT id, name, artist, date, venue FROM events WHERE id = ?'),
+  company: db.prepare('SELECT id, name, gstin FROM companies WHERE id = ?'),
+  ticket: db.prepare('SELECT tokenId, eventId, seat, ownerUserId FROM tickets WHERE tokenId = ?'),
+}
+const get = (stmt, id) => (id == null ? undefined : stmt.get(id))
+
+/** "XXXX XXXX 1234" for Aadhaar, "XXXXXX234F" style for PAN. */
+export const maskId = (type, last4) =>
+  !last4 ? null : type === 'AADHAAR' ? `XXXX XXXX ${last4}` : `XXXXXX${last4}`
+
+function person(prefix, user) {
+  if (!user) return {}
+  return { [`${prefix}Name`]: user.name ?? null, [`${prefix}Phone`]: user.phone ?? null }
+}
+function seatParts(seat) {
+  if (!seat) return {}
+  const [block, row, number] = String(seat).split('-')
+  return { block, row: Number(row), seatNumber: Number(number) }
+}
+const txUrl = (hash) => (hash ? `${config.explorer}/tx/${hash}` : null)
+
+function enrich(table, d) {
+  const ev = get(q.event, d.eventId)
+  const eventName = ev ? { eventName: ev.name } : {}
+  switch (table) {
+    case 'users':
+      return { ...d, idMasked: maskId(d.idType, d.idLast4), loginMethod: 'phone OTP', walletUrl: `${config.explorer}/address/${d.walletAddress}` }
+    case 'events':
+      return { ...d, contract: config.contract.address, createTxUrl: txUrl(d.createTx) }
+    case 'entries': {
+      const u = get(q.user, d.userId)
+      return { ...d, ...eventName, ...person('user', u), idType: u?.idType ?? null, idMasked: maskId(u?.idType, u?.idLast4) }
+    }
+    case 'tickets': {
+      const owner = get(q.user, d.ownerUserId)
+      return {
+        ...d,
+        ...eventName,
+        ...seatParts(d.seat),
+        ...person('owner', owner),
+        ownerWallet: owner?.walletAddress ?? null,
+        inPool: d.ownerUserId == null,
+        mintTxUrl: txUrl(d.mintTx),
+        tokenUrl: `${config.explorer}/token/${config.contract.address}/instance/${d.tokenId}`,
+      }
+    }
+    case 'scans': {
+      const t = get(q.ticket, d.tokenId)
+      const tev = get(q.event, t?.eventId)
+      return {
+        ...d,
+        eventId: t?.eventId ?? null,
+        eventName: tev?.name ?? null,
+        seat: t?.seat ?? null,
+        ...person('holder', get(q.user, t?.ownerUserId)),
+        ...person('staff', get(q.user, d.staffId)),
+        txUrl: txUrl(d.txHash),
+      }
+    }
+    case 'companies':
+      return { ...d, ...eventName, ...person('admin', get(q.user, d.adminUserId)) }
+    case 'corporate_seats': {
+      const c = get(q.company, d.companyId)
+      const t = get(q.ticket, d.tokenId)
+      return { ...d, ...eventName, companyName: c?.name ?? null, gstin: c?.gstin ?? null, ...person('employee', get(q.user, d.userId)), seat: t?.seat ?? null }
+    }
+    case 'activity':
+      return { ...d, ...eventName, ...person('user', get(q.user, d.userId)), txUrl: txUrl(d.txHash) }
+    case 'pow_challenges':
+      return { ...d, ...eventName, ...person('user', get(q.user, d.userId)) }
+    case 'blocked_attempts':
+      return { ...d, ...eventName, ...person('user', get(q.user, d.userId)) }
+    default:
+      return d
+  }
+}
+
 function toDoc(table, row) {
   const d = { ...row }
   if (table === 'users') delete d.encKey
   if (table === 'events' && !d.drawnAt) d.seed = null
   for (const k of BOOLEAN_COLUMNS[table] || []) d[k] = !!d[k]
-  d._syncedAt = serverTimestamp()
-  return d
+  const out = enrich(table, d)
+  out._syncedAt = serverTimestamp()
+  return out
 }
+
+/** Everything the organiser wants at a glance, per event. */
+function statsDoc(eventId) {
+  const id = Number(eventId)
+  const ev = get(q.event, id)
+  const n = (sql, ...a) => db.prepare(sql).get(...a).n
+  const byReason = Object.fromEntries(
+    db.prepare('SELECT reason, COUNT(*) n FROM blocked_attempts WHERE eventId = ? GROUP BY reason').all(id).map((r) => [r.reason, r.n]),
+  )
+  const kinds = Object.fromEntries(
+    db.prepare('SELECT kind, COUNT(*) n FROM activity WHERE eventId = ? GROUP BY kind').all(id).map((r) => [r.kind, r.n]),
+  )
+  return {
+    eventId: id,
+    eventName: ev?.name ?? null,
+    entries: n('SELECT COUNT(*) n FROM entries WHERE eventId = ?', id),
+    ticketsRequested: n('SELECT COALESCE(SUM(quantity),0) n FROM entries WHERE eventId = ?', id),
+    winners: n("SELECT COUNT(*) n FROM entries WHERE eventId = ? AND status = 'won'", id),
+    waitlist: n("SELECT COUNT(*) n FROM entries WHERE eventId = ? AND status = 'waitlist'", id),
+    ticketsMinted: n('SELECT COUNT(*) n FROM tickets WHERE eventId = ?', id),
+    corporateTickets: n('SELECT COUNT(*) n FROM tickets WHERE eventId = ? AND corporate = 1', id),
+    listedForResale: n("SELECT COUNT(*) n FROM tickets WHERE eventId = ? AND status = 'listed'", id),
+    checkedIn: n("SELECT COUNT(*) n FROM tickets WHERE eventId = ? AND status = 'used'", id),
+    resold: kinds.resold || 0,
+    returned: kinds.returned || 0,
+    reassigned: kinds.reassigned || 0,
+    botAttemptsBlocked: Object.values(byReason).reduce((a, b) => a + b, 0),
+    blockedByReason: byReason,
+    puzzlesIssued: n('SELECT COUNT(*) n FROM pow_challenges WHERE eventId = ?', id),
+    puzzlesSolved: n('SELECT COUNT(*) n FROM pow_challenges WHERE eventId = ? AND solved = 1', id),
+    _syncedAt: serverTimestamp(),
+  }
+}
+const EVENT_TABLES = new Set(['entries', 'tickets', 'blocked_attempts', 'activity', 'pow_challenges', 'events'])
 
 function summaryDoc(eventId) {
   const where = eventId === 'global' ? 'eventId IS NULL' : 'eventId = ?'
@@ -66,7 +181,13 @@ function summaryDoc(eventId) {
     eventId: eventId === 'global' ? null : Number(eventId),
     total: Object.values(byReason).reduce((a, b) => a + b, 0),
     byReason,
-    latest: db.prepare(`SELECT id, reason, ip, userId, detail, at FROM blocked_attempts WHERE ${where} ORDER BY id DESC LIMIT 50`).all(...args),
+    latest: db
+      .prepare(
+        `SELECT b.id, b.reason, b.ip, b.userId, u.name AS userName, u.phone AS userPhone, b.detail, b.at
+         FROM blocked_attempts b LEFT JOIN users u ON u.id = b.userId WHERE ${where.replace('eventId', 'b.eventId')}
+         ORDER BY b.id DESC LIMIT 50`,
+      )
+      .all(...args),
     _syncedAt: serverTimestamp(),
   }
 }
@@ -74,6 +195,10 @@ function summaryDoc(eventId) {
 const base = () => ['fairpass', instanceId]
 
 function enqueue(table, pk, eventId) {
+  if (EVENT_TABLES.has(table)) {
+    const ev = table === 'events' ? pk : eventId // passed in by the trigger (no queries inside a trigger)
+    if (ev != null) queue.set(`stats:${ev}`, { kind: 'stats', table: 'event_stats', pk: String(ev) })
+  }
   if (table === 'blocked_attempts' && !config.firestoreMirrorAllBlocked) {
     const id = eventId == null ? 'global' : String(eventId)
     queue.set(`summary:${id}`, { kind: 'summary', table: 'blocked_summary', pk: id })
@@ -102,6 +227,10 @@ async function flush() {
           batch.set(ref, summaryDoc(item.pk))
           continue
         }
+        if (item.kind === 'stats') {
+          batch.set(ref, statsDoc(item.pk))
+          continue
+        }
         const row = rowStmt[item.table].get(item.pk)
         if (row) batch.set(ref, toDoc(item.table, row))
         else batch.delete(ref)
@@ -117,7 +246,8 @@ async function flush() {
     }
   } catch (err) {
     mirrorStatus.failures++
-    mirrorStatus.lastError = err.code || err.message
+    const reason = err.code && err.code !== 'unknown' ? err.code : err.message
+    mirrorStatus.lastError = reason
     if (Date.now() - lastLoggedError > 60_000) {
       lastLoggedError = Date.now()
       const hint =
@@ -125,8 +255,10 @@ async function flush() {
           ? ' (Firestore security rules reject the write: test mode may have expired; allow writes to fairpass/** in the Firebase console)'
           : err.code === 'resource-exhausted'
             ? ' (daily free-tier write quota used up; resets at midnight Pacific time)'
-            : ''
-      console.warn(`[firestore] mirror write failed: ${err.code || err.message}${hint}. Will retry.`)
+            : /fetch failed|TLS|socket|ENOTFOUND|ECONNRESET|ETIMEDOUT/i.test(String(err.message))
+              ? ' (network problem reaching Google: check the internet connection, VPN or antivirus HTTPS scanning)'
+              : ''
+      console.warn(`[firestore] mirror write failed: ${reason}${hint}. Nothing is lost; ${queue.size} change(s) will be retried.`)
     }
     if (!timer) timer = setTimeout(flush, 5000)
   } finally {
@@ -146,7 +278,7 @@ export async function startFirestoreMirror() {
     return null
   })
   for (const [table, pk] of Object.entries(TABLES)) {
-    const extra = table === 'blocked_attempts' ? ', ROW.eventId' : ''
+    const extra = EVENT_TABLES.has(table) && table !== 'events' ? ', ROW.eventId' : ''
     for (const [op, row] of [
       ['INSERT', 'NEW'],
       ['UPDATE', 'NEW'],
@@ -167,6 +299,7 @@ export async function startFirestoreMirror() {
       for (const r of db.prepare(`SELECT ${pk} AS pk FROM ${table}`).all()) enqueue(table, r.pk)
     }
   }
+  for (const r of db.prepare('SELECT id FROM events').all()) enqueue('events', r.id)
 
   const info = {
     instanceId,

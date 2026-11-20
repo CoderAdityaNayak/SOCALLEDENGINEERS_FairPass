@@ -30,14 +30,18 @@ router.post('/verify', (req, res) => {
   if (String(req.body?.otp || '').trim() !== entry.code) throw new HttpError(400, 'Wrong code')
   otps.delete(phone)
 
-  const user = getUserByPhone(phone) || createUser({ phone })
+  const existing = getUserByPhone(phone) || createUser({ phone })
+  db.prepare("UPDATE users SET lastLoginAt = datetime('now') WHERE id = ?").run(existing.id)
+  const user = getUser(existing.id)
   res.json({ token: signToken(user), user: publicUser(user), isNew: !user.name })
 })
 
 router.post('/kyc', requireAuth, (req, res) => {
   const name = String(req.body?.name || '').trim()
   if (name.length < 2) throw new HttpError(400, 'Enter your name as on your ID')
-  const idHash = hashId(normalizeIdNumber(req.body?.idNumber))
+  const idNumber = normalizeIdNumber(req.body?.idNumber)
+  const idHash = hashId(idNumber)
+  const idType = /^\d{12}$/.test(idNumber) ? 'AADHAAR' : 'PAN'
 
   const owner = db.prepare('SELECT id FROM users WHERE idHash = ?').get(idHash)
   if (owner && owner.id !== req.user.id) {
@@ -46,7 +50,14 @@ router.post('/kyc', requireAuth, (req, res) => {
   }
   if (req.user.idHash && req.user.idHash !== idHash) throw new HttpError(409, 'Your account is already verified with a different ID')
 
-  db.prepare('UPDATE users SET name = ?, idHash = ?, isVerified = 1 WHERE id = ?').run(name, idHash, req.user.id)
+  // Only the keyed hash, the ID type and the last 4 characters are stored; never the full number.
+  db.prepare('UPDATE users SET name = ?, idHash = ?, idType = ?, idLast4 = ?, isVerified = 1 WHERE id = ?').run(
+    name,
+    idHash,
+    idType,
+    idNumber.slice(-4),
+    req.user.id,
+  )
   const user = getUser(req.user.id)
   onUserVerified(user)
   res.json({ user: publicUser(user) })
