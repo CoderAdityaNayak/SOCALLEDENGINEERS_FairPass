@@ -67,9 +67,19 @@ export function publicEvent(e) {
   }
 }
 
-router.get('/', (_req, res) => {
+/** GET /events: all events by date. Logged-in fans also get `myEntry` per event (null if not entered). */
+router.get('/', (req, res) => {
+  const user = loadUser(req)
+  const mine = new Map(
+    user
+      ? db
+          .prepare('SELECT id, eventId, quantity, ticketsWon, entryNumber, status, drawRank FROM entries WHERE userId = ?')
+          .all(user.id)
+          .map((e) => [e.eventId, e])
+      : [],
+  )
   const events = db.prepare('SELECT * FROM events ORDER BY date').all()
-  res.json({ events: events.map(publicEvent) })
+  res.json({ events: events.map((e) => ({ ...publicEvent(e), myEntry: user ? mine.get(e.id) || null : undefined })) })
 })
 
 router.get('/:id', (req, res) => {

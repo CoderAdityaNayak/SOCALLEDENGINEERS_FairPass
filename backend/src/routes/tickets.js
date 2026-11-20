@@ -7,7 +7,7 @@ import { getTicket, splitSeat } from '../services/tickets.js'
 import { gatePassMessage } from '../services/gatepass.js'
 import { reassignments, returnTicket } from '../services/pool.js'
 import { getUser } from '../services/users.js'
-import { faceInr, formatInr, inrToWei, maxResaleInr, maxResaleWei, weiToInr } from '../services/money.js'
+import { faceInr, formatInr, listingWei, maxResaleInr, maxResaleWei, weiToInr } from '../services/money.js'
 
 export const router = Router()
 
@@ -102,7 +102,7 @@ router.post('/tickets/:id/list', requireAuth, async (req, res) => {
 
   let priceWei
   try {
-    if (req.body?.priceInr != null && req.body.priceInr !== '') priceWei = inrToWei(req.body.priceInr)
+    if (req.body?.priceInr != null && req.body.priceInr !== '') priceWei = listingWei(req.body.priceInr, event)
     else priceWei = quai.quais.parseQuai(String(req.body?.price ?? ''))
   } catch {
     throw new HttpError(400, 'Enter a price in ₹, e.g. 4950')
@@ -112,8 +112,8 @@ router.post('/tickets/:id/list', requireAuth, async (req, res) => {
   if (priceWei > cap) {
     throw new HttpError(
       422,
-      `Above the cap. The most you can ask is ${formatInr(weiToInr(cap))} (face price + ${event.resaleCapPct}%). The FairPass contract would reject this price.`,
-      { reason: 'PRICE_ABOVE_CAP', maxPrice: quai.quais.formatQuai(cap), maxPriceInr: weiToInr(cap), resaleCapPct: event.resaleCapPct },
+      `Above the cap. The most you can ask is ${formatInr(maxResaleInr(event))} (face price + ${event.resaleCapPct}%). The FairPass contract would reject this price.`,
+      { reason: 'PRICE_ABOVE_CAP', maxPrice: quai.quais.formatQuai(cap), maxPriceInr: maxResaleInr(event), resaleCapPct: event.resaleCapPct },
     )
   }
 
@@ -121,7 +121,7 @@ router.post('/tickets/:id/list', requireAuth, async (req, res) => {
   const price = quai.quais.formatQuai(priceWei)
   db.prepare("UPDATE tickets SET status = 'listed', listedPrice = ?, listedPriceInr = ?, listingInvalid = NULL WHERE tokenId = ?").run(
     price,
-    weiToInr(priceWei),
+    priceWei === cap ? maxResaleInr(event) : weiToInr(priceWei), // a listing "at the max" shows the clean ₹ max
     ticket.tokenId,
   )
   logActivity({ eventId: ticket.eventId, kind: 'listed', tokenId: ticket.tokenId, userId: req.user.id, txHash: hash, detail: `${price} QUAI` })

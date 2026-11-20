@@ -460,29 +460,33 @@ export default function Organiser() {
   return (
     <div className="grid gap-6 lg:grid-cols-[220px_1fr]">
       <aside className="lg:sticky lg:top-24 lg:self-start">
-        <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-muted">Events</p>
-        <nav className="flex gap-2 overflow-x-auto lg:flex-col" aria-label="Events">
+        {/* Which event the stats, Run draw and Resale settings apply to. */}
+        <label htmlFor="event-pick" className="mb-2 block text-xs font-semibold uppercase tracking-widest text-muted">
+          Event
+        </label>
+        <select
+          id="event-pick"
+          value={creating ? '' : (eventId ?? '')}
+          onChange={(e) => {
+            setCreating(false)
+            setStats(null)
+            setEventId(Number(e.target.value))
+          }}
+          className="min-h-12 w-full rounded-[14px] border border-line bg-card px-3 font-semibold text-ink focus:border-lime focus:outline-none"
+        >
+          {creating && <option value="">New event…</option>}
           {(events || []).map((e) => (
-            <button
-              key={e.id}
-              onClick={() => {
-                setCreating(false)
-                setEventId(e.id)
-              }}
-              aria-current={e.id === eventId}
-              className={`shrink-0 rounded-[12px] px-3 py-2 text-left text-sm ${e.id === eventId && !creating ? 'bg-raised text-ink' : 'text-muted hover:text-ink'}`}
-            >
-              <span className="block font-semibold">{e.name}</span>
-              <span className="text-xs capitalize">{e.lotteryStatus}</span>
-            </button>
+            <option key={e.id} value={e.id}>
+              {e.name} · {e.lotteryStatus}
+            </option>
           ))}
-          <button
-            onClick={() => setCreating(true)}
-            className={`flex shrink-0 items-center gap-2 rounded-[12px] px-3 py-2 text-left text-sm ${creating ? 'bg-raised text-ink' : 'text-lime hover:bg-raised'}`}
-          >
-            <I.Plus size={16} /> New event
-          </button>
-        </nav>
+        </select>
+        <button
+          onClick={() => setCreating(true)}
+          className={`mt-2 flex w-full items-center gap-2 rounded-[12px] px-3 py-2 text-left text-sm ${creating ? 'bg-raised text-ink' : 'text-lime hover:bg-raised'}`}
+        >
+          <I.Plus size={16} /> New event
+        </button>
         <div className="mt-6 hidden space-y-1 text-sm lg:block">
           <a href="#stats" className="block text-muted hover:text-ink">Overview</a>
           <a href="#resale" className="block text-muted hover:text-ink">Resale settings</a>

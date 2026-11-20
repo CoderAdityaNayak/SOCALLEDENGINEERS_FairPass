@@ -118,11 +118,18 @@ npm run demo                     # starts API (:8080) + app (:5173), seeds demo 
 
 | Role | Phone | Notes |
 |---|---|---|
-| Organiser | 9000000001 | Dashboard: run the draw, resale settings, create events |
+| Organiser | 9000000001 | Dashboard: pick the event in the dropdown, run its draw, change its resale cap, create events |
 | Gate staff | 9000000002 | Scanner |
-| Fans 1-5 | 9000000011 … 9000000015 | Fan 1 (Asha) enters live; fans 2-5 already entered asking for 2, 1, 1, 1 tickets |
+| Fans 1-5 | 9000000011 … 9000000015 | Fan 1 (Asha) enters live; fans 2-5 entered World Tour (2, 1, 1, 1 tickets); Ravi and Meera also entered Monsoon Sessions |
 
-The event has 4 tickets in the draw, face ₹4,500 and a +10% resale cap.
+Three events are created on Quai, each with its own price and resale cap. The home page lists them as cards; fans
+pick one, and an event they already entered shows "Already entered".
+
+| Event | Face price | Resale cap | Tickets in the draw |
+|---|---|---|---|
+| World Tour · [Headliner] · Mumbai | ₹4,500 | +10% | 4 |
+| Monsoon Sessions · Indie Collective · Mumbai | ₹2,500 | +5% | 3 |
+| Coastal Beats · Sunset DJ Night · Goa | ₹6,000 | +20% | 5 |
 
 **Every demo login uses OTP `123456`.** (Outside the demo, OTPs are printed in the API console: mock SMS.)
 
@@ -131,7 +138,7 @@ The event has 4 tickets in the draw, face ₹4,500 and a +10% resale cap.
 1. **Bots:** in a second terminal run `npm run bot-attack`. 10,000 entry attempts → **9,998 blocked** (no account,
    no verified ID, duplicate ID, rate limit, missing or fake proof-of-work). Open the **organiser dashboard**: the red
    "Bot attempts blocked" card and the per-reason bars.
-2. **Fair entry:** log in as **Asha** → *Enter lottery* → choose how many tickets (+/−) → watch the checklist solve
+2. **Fair entry:** log in as **Asha** → pick an event card → *Enter lottery* → choose how many tickets (+/−) → watch the checklist solve
    the **anti-bot puzzle** (real x402 Work) → entry number. As organiser, **Run draw** → winners are **minted on Quai**
    (one transaction per winner; links in "On-chain activity"). "Draw proof → Verify in this browser" recomputes the
    draw from the revealed seed, including who got only part of their quantity.

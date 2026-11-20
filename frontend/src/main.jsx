@@ -7,6 +7,7 @@ import { Layout } from './components/Layout.jsx'
 import { Spinner } from './components/ui.jsx'
 import Login from './pages/Login.jsx'
 import Home from './pages/Home.jsx'
+import EventPage from './pages/Event.jsx'
 import Enter from './pages/Enter.jsx'
 import MyTickets from './pages/MyTickets.jsx'
 import TicketPage from './pages/Ticket.jsx'
@@ -37,6 +38,7 @@ createRoot(document.getElementById('root')).render(
         <Routes>
           <Route element={<Layout />}>
             <Route index element={<Home />} />
+            <Route path="events/:eventId" element={<EventPage />} />
             <Route path="login" element={<Login />} />
             <Route path="enter/:eventId" element={<Protected><Enter /></Protected>} />
             <Route path="tickets" element={<Protected><MyTickets /></Protected>} />

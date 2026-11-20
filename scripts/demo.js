@@ -1,9 +1,9 @@
 // npm run demo: starts backend + frontend, seeds a ready-to-present FairPass demo, prints logins.
 //
 // Seeds (through the real API, so everything is on Quai Orchard):
-//   - an open lottery event created on-chain: face ₹4,500, resale cap +10%, 4 tickets in the draw
-//   - organiser, gate staff, 5 verified fans (fans 2-5 already entered with real x402 Work proofs, asking for
-//     2, 1, 1 and 1 tickets; fan 1 is left for the live demo)
+//   - 3 open lottery events created on-chain (DEMO_EVENTS: different names, dates, ₹ prices and resale %)
+//   - organiser, gate staff, 5 verified fans (fans 2-5 entered World Tour with real x402 Work proofs, asking for
+//     2, 1, 1 and 1 tickets; two of them also entered Monsoon Sessions; fan 1 is left for the live demo)
 // Options: --keep   keep the existing demo database instead of resetting it
 //
 // Every account logs in with OTP 123456 (DEMO_FIXED_OTP). Ctrl+C stops both servers.
@@ -19,6 +19,45 @@ const WEB_URL = 'http://localhost:5173'
 const OTP = '123456'
 const DB = path.join(root, 'backend', 'data', 'demo.db')
 const keep = process.argv.includes('--keep')
+
+const DEMO_EVENTS = [
+  {
+    name: 'World Tour',
+    artist: '[Headliner]',
+    date: '2027-01-19T19:30:00+05:30',
+    venue: 'DY Patil Stadium',
+    city: 'Mumbai',
+    supply: 100,
+    facePriceInr: 4500,
+    resaleCapPct: 10,
+    lotteryTickets: 4,
+    lotteryCloseInDays: 2,
+  },
+  {
+    name: 'Monsoon Sessions',
+    artist: 'Indie Collective',
+    date: '2026-12-20T18:00:00+05:30',
+    venue: 'Shanmukhananda Hall',
+    city: 'Mumbai',
+    supply: 40,
+    facePriceInr: 2500,
+    resaleCapPct: 5,
+    lotteryTickets: 3,
+    lotteryCloseInDays: 1,
+  },
+  {
+    name: 'Coastal Beats',
+    artist: 'Sunset DJ Night',
+    date: '2027-02-14T20:00:00+05:30',
+    venue: 'Vagator Beach Grounds',
+    city: 'Goa',
+    supply: 80,
+    facePriceInr: 6000,
+    resaleCapPct: 20,
+    lotteryTickets: 5,
+    lotteryCloseInDays: 3,
+  },
+]
 
 const PEOPLE = {
   organiser: { phone: '+919000000001', name: 'FairPass Organiser' },
@@ -103,30 +142,23 @@ async function seed() {
   const existing = (await must(api('GET', '/events'), 'events')).events
   if (existing.length) {
     step(`Keeping existing data (${existing.length} event(s))`)
-    return existing[0]
+    return existing
   }
 
-  step('Creating "[Headliner] World Tour" on Quai Orchard (about 20 s)...')
-  const close = new Date(Date.now() + 2 * 86400_000)
-  const { event } = await must(
-    api('POST', '/events', {
-      token: org,
-      body: {
-        name: 'World Tour',
-        artist: '[Headliner]',
-        date: '2027-01-19T19:30:00+05:30',
-        venue: 'DY Patil Stadium',
-        city: 'Mumbai',
-        supply: 100,
-        facePriceInr: 4500,
-        resaleCapPct: 10,
-        lotteryTickets: 4,
-        lotteryClose: close.toISOString(),
-      },
+  // Three events, created on Quai at the same time (one createEvent transaction each).
+  const days = (n) => new Date(Date.now() + n * 86400_000).toISOString()
+  step(`Creating ${DEMO_EVENTS.length} events on Quai Orchard (about 30 s)...`)
+  const events = await Promise.all(
+    DEMO_EVENTS.map(async (e) => {
+      const { lotteryCloseInDays, ...body } = e
+      const r = await must(api('POST', '/events', { token: org, body: { ...body, lotteryClose: days(lotteryCloseInDays) } }), `create ${e.name}`)
+      return r.event
     }),
-    'create event',
   )
-  step(`Event ${event.id} on-chain (chain event ${event.chainEventId}): ${event.createTx}`)
+  events.sort((a, b) => a.id - b.id)
+  for (const ev of events)
+    step(`${ev.name}: event ${ev.id}, chain event ${ev.chainEventId}, ₹${ev.facePriceInr}, resale +${ev.resaleCapPct}%: ${ev.createTx}`)
+  const byName = Object.fromEntries(events.map((e) => [e.name, e]))
 
   await loginAs(PEOPLE.staff)
   await must(api('POST', '/staff', { token: org, body: { phone: PEOPLE.staff.phone } }), 'make staff')
@@ -135,13 +167,21 @@ async function seed() {
   const fanTokens = []
   for (const f of PEOPLE.fans) fanTokens.push(await verified(f))
   step('5 fans verified')
-  const quantities = [null, 2, 1, 1, 1]
-  for (let i = 1; i < PEOPLE.fans.length; i++) {
-    const r = await enterWithWork(fanTokens[i], event.id, quantities[i])
-    if (r.status !== 201) throw new Error(`${PEOPLE.fans[i].name} entry: ${JSON.stringify(r.data)}`)
+  // [fan index, event name, quantity]: fans 2-5 in World Tour, two of them also in Monsoon Sessions. Fan 1 enters live.
+  const plan = [
+    [1, 'World Tour', 2],
+    [2, 'World Tour', 1],
+    [3, 'World Tour', 1],
+    [4, 'World Tour', 1],
+    [1, 'Monsoon Sessions', 1],
+    [2, 'Monsoon Sessions', 3],
+  ]
+  for (const [i, name, quantity] of plan) {
+    const r = await enterWithWork(fanTokens[i], byName[name].id, quantity)
+    if (r.status !== 201) throw new Error(`${PEOPLE.fans[i].name} entry for ${name}: ${JSON.stringify(r.data)}`)
   }
-  step(`Fans 2-5 entered with real x402 Work proofs, asking for 2, 1, 1, 1 tickets (fan 1, ${PEOPLE.fans[0].name}, is yours to enter live)`)
-  return event
+  step(`Entries with real x402 Work proofs: fans 2-5 in World Tour (2, 1, 1, 1 tickets), Ravi and Meera also in Monsoon Sessions (fan 1, ${PEOPLE.fans[0].name}, is yours to enter live)`)
+  return events
 }
 
 async function main() {
@@ -157,7 +197,7 @@ async function main() {
   })
   await waitFor(`http://localhost:${API_PORT}/health`)
   console.log('\nSeeding demo data:')
-  const event = await seed()
+  const events = await seed()
 
   // Run Vite's CLI with node directly (no shell needed on Windows).
   const viteBin = path.join(root, 'node_modules', 'vite', 'bin', 'vite.js')
@@ -172,7 +212,8 @@ async function main() {
   console.log(`\n================  FairPass demo is running  ================`)
   console.log(`  App:        ${WEB_URL}`)
   console.log(`  API:        http://localhost:${API_PORT}`)
-  console.log(`  Event:      ${event.name} (id ${event.id}), lottery open, ${event.lotteryTickets} tickets in the draw, resale +${event.resaleCapPct}%`)
+  for (const e of events)
+    console.log(`  Event ${e.id}:    ${e.name}, ₹${e.facePriceInr}, resale +${e.resaleCapPct}%, ${e.lotteryTickets} tickets in the draw`)
   console.log(`  OTP for every account: ${OTP}\n`)
   console.log('  Role                       Phone            Name')
   for (const [role, p] of rows) console.log(`  ${role.padEnd(26)} ${p.phone.slice(3).padEnd(16)} ${p.name}`)

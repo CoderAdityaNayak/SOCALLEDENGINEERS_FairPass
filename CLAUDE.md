@@ -118,13 +118,19 @@ in ₹ and converted to wei with floor division, then checked against the exact 
    setResaleCap on Quai, wait for confirmation, save pct + tx, mark listings above the new max invalid), `scripts/e2e.js`.
 7. **Frontend** ✅: dark mobile-first design (bg #0B0D12, cards #151922, borders #262C38, text #F2F4F8, muted #9AA3B2, lime #C6F432 with
    dark text, error #C62828/#FF8A8A; Space Grotesk 700 headings, Inter body; radius 14–22px; stroke SVG icons; no emoji).
-   Pages: Login, Home/Event, Enter lottery (quantity input), My ticket, Resale, Gate scanner, Organiser dashboard
-   (create-event form with resale % + live ₹ preview, "Resale settings" card); Pelagus connect; role nav.
+   Pages: Login, Home (`/`: all events as cards, open lotteries first; "Already entered" + disabled Enter for events
+   the fan entered, from `myEntry` in `GET /events`), Event (`/events/:eventId`), Enter lottery (`/enter/:eventId`,
+   quantity input), My tickets (all events, event name on each), Resale, Gate scanner, Organiser dashboard (event
+   dropdown that drives stats / Run draw / Resale settings, create-event form with resale % + live ₹ preview);
+   Pelagus connect; role nav. No event id is hardcoded anywhere: pages take it from the URL or the dropdown.
    The event page and resale page read the live cap from Firestore `fairpass/live/events/{id}` with `onSnapshot`
    (frontend `firebase` + `VITE_FIREBASE_*`), falling back to API polling when Firebase isn't configured.
-8. **Demo** ✅: `npm run demo` (resets backend/data/demo.db, DEMO_MODE=1 + DEMO_FIXED_OTP=123456, creates a fresh on-chain
-   event with 3 lottery tickets and cap 10%, seeds organiser 9000000001, staff 9000000002, fans 9000000011-15 (2-5
-   pre-entered)), README.md.
+8. **Demo** ✅: `npm run demo` (resets backend/data/demo.db, DEMO_MODE=1 + DEMO_FIXED_OTP=123456, creates 3 events on
+   Quai in parallel (`DEMO_EVENTS` in scripts/demo.js: World Tour ₹4,500 +10% 4 tickets; Monsoon Sessions ₹2,500 +5%
+   3 tickets; Coastal Beats ₹6,000 +20% 5 tickets), seeds organiser 9000000001, staff 9000000002, fans 9000000011-15
+   (2-5 entered World Tour asking 2,1,1,1; Ravi and Meera also entered Monsoon Sessions; Asha enters live)), README.md.
+   ₹ maxima: shown as the clean figure (e.g. ₹2,625) when within one paisa of the on-chain cap; a listing at that
+   price is snapped to the exact cap in wei (`money.js` `listingWei`) so rounding dust can't make the contract reject it.
 
 ### Demo script
 

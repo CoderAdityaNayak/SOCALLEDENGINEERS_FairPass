@@ -51,17 +51,17 @@ function PelagusButton() {
 
 const NAV = {
   fan: [
-    { to: '/', label: 'Event', icon: I.Home, end: true },
+    { to: '/', label: 'Events', icon: I.Home, end: true },
     { to: '/tickets', label: 'Tickets', icon: I.Ticket },
   ],
   staff: [
     { to: '/gate', label: 'Scan', icon: I.Scan },
-    { to: '/', label: 'Event', icon: I.Home, end: true },
+    { to: '/', label: 'Events', icon: I.Home, end: true },
   ],
   organiser: [
     { to: '/organiser', label: 'Dashboard', icon: I.Chart },
     { to: '/gate', label: 'Scan', icon: I.Scan },
-    { to: '/', label: 'Event', icon: I.Home, end: true },
+    { to: '/', label: 'Events', icon: I.Home, end: true },
   ],
 }
 

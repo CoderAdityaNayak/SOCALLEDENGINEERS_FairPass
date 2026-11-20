@@ -99,7 +99,7 @@ export default function Enter() {
 
   return (
     <div className="mx-auto max-w-md">
-      <Link to="/" className="mb-4 inline-flex items-center gap-1 text-sm text-muted hover:text-ink">
+      <Link to={`/events/${eventId}`} className="mb-4 inline-flex items-center gap-1 text-sm text-muted hover:text-ink">
         <I.ArrowLeft size={16} /> {event.name}
       </Link>
       <h1 className="text-3xl">{phase === 'done' ? "You're in the draw" : 'Enter the lottery'}</h1>
@@ -205,7 +205,7 @@ export default function Enter() {
           <p className="mt-2 text-sm text-muted">
             Not picked? You join the waitlist in draw order. Returned tickets go to the waitlist first, at face price.
           </p>
-          <Link to="/" className="mt-4 inline-flex min-h-12 items-center justify-center rounded-[14px] border border-line px-5 font-semibold">
+          <Link to={`/events/${eventId}`} className="mt-4 inline-flex min-h-12 items-center justify-center rounded-[14px] border border-line px-5 font-semibold">
             Back to event
           </Link>
         </Card>

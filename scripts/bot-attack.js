@@ -24,11 +24,12 @@ function classify(r) {
 }
 
 async function main() {
-  const eventId =
-    Number(process.argv[2]) ||
-    (await must(api('GET', '/events'), 'list events')).events.find((e) => e.lotteryStatus === 'open')?.id
-  if (!eventId) throw new Error('No open lottery event. Create one (or run npm run demo) first.')
-  console.log(`\nFairPass bot attack simulation -> ${API}, event ${eventId}\n`)
+  // Target: the event id given on the command line, else the first open event.
+  const events = (await must(api('GET', '/events'), 'list events')).events
+  const target = process.argv[2] ? events.find((e) => e.id === Number(process.argv[2])) : events.find((e) => e.lotteryStatus === 'open')
+  if (!target) throw new Error('No such open lottery event. Pass an event id (npm run bot-attack -- <id>) or run npm run demo first.')
+  const eventId = target.id
+  console.log(`\nFairPass bot attack simulation -> ${API}, event ${eventId} "${target.name}"\n`)
 
   const tally = {}
   const record = (wave, results) => {
